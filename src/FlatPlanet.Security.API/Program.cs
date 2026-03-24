@@ -2,7 +2,12 @@ using System.Text;
 using FlatPlanet.Security.API.Middleware;
 using FlatPlanet.Security.Application.Common.Options;
 using FlatPlanet.Security.Application.Interfaces;
+using FlatPlanet.Security.Application.Interfaces.Repositories;
+using FlatPlanet.Security.Application.Interfaces.Services;
+using FlatPlanet.Security.Application.Services;
+using FlatPlanet.Security.Infrastructure.ExternalServices;
 using FlatPlanet.Security.Infrastructure.Persistence;
+using FlatPlanet.Security.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 
@@ -39,6 +44,21 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 builder.Services.AddAuthorization();
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks();
+
+// HTTP clients
+builder.Services.AddHttpClient<ISupabaseAuthClient, SupabaseAuthClient>();
+
+// Repositories
+builder.Services.AddScoped<IUserRepository, UserRepository>();
+builder.Services.AddScoped<ISessionRepository, SessionRepository>();
+builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
+builder.Services.AddScoped<ILoginAttemptRepository, LoginAttemptRepository>();
+builder.Services.AddScoped<IAuditLogRepository, AuditLogRepository>();
+builder.Services.AddScoped<ISecurityConfigRepository, SecurityConfigRepository>();
+
+// Services
+builder.Services.AddScoped<IJwtService, JwtService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
 
 var app = builder.Build();
 
