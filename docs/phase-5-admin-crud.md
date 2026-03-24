@@ -73,4 +73,4 @@ Full management endpoints for companies, apps, resources, roles, permissions, an
     - [ ] `PUT /api/v1/users/{id}`
     - [ ] `PUT /api/v1/users/{id}/status`
 
-## Status: PENDING
+## Status: COMPLETE

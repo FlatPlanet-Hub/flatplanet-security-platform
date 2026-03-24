@@ -43,4 +43,4 @@ Full login/logout/refresh/me flow with Supabase Auth, JWT issuance, session mana
   - [ ] `POST /api/v1/auth/refresh`
   - [ ] `GET /api/v1/auth/me`
 
-## Status: PENDING
+## Status: COMPLETE

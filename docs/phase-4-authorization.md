@@ -33,4 +33,4 @@ Core authorization check and user-context endpoints consumed by all connected ap
   - [ ] `AuthorizeController` — `POST /api/v1/authorize`
   - [ ] `UserContextController` — `GET /api/v1/apps/{appSlug}/user-context`
 
-## Status: PENDING
+## Status: COMPLETE

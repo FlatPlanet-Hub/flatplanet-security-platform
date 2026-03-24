@@ -33,4 +33,4 @@ Audit log query, GDPR data export/anonymize, user offboarding, and security conf
     - [ ] `GET /api/v1/security/config` (platform_owner only)
     - [ ] `PUT /api/v1/security/config/{key}` (platform_owner only)
 
-## Status: PENDING
+## Status: COMPLETE
