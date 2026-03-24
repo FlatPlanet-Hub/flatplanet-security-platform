@@ -35,7 +35,7 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> Logout()
     {
         var userId = GetUserId();
-        var sessionId = GetSessionId();
+        var sessionId = TryGetSessionId();
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
 
         await _authService.LogoutAsync(sessionId, userId, ipAddress);
@@ -70,10 +70,9 @@ public class AuthController : ControllerBase
         return Guid.Parse(sub);
     }
 
-    private Guid GetSessionId()
+    private Guid? TryGetSessionId()
     {
-        var sessionId = User.FindFirstValue("session_id")
-            ?? throw new UnauthorizedAccessException("Invalid token: session_id claim missing.");
-        return Guid.Parse(sessionId);
+        var sessionId = User.FindFirstValue("session_id");
+        return Guid.TryParse(sessionId, out var id) ? id : null;
     }
 }

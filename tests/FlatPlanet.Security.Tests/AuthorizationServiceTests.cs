@@ -44,9 +44,8 @@ public class AuthorizationServiceTests
         var service = CreateService();
 
         // Act
-        var result = await service.AuthorizeAsync(new AuthorizeRequest
+        var result = await service.AuthorizeAsync(_userId, new AuthorizeRequest
         {
-            UserId = _userId,
             AppSlug = "my-app",
             ResourceIdentifier = "doc/123",
             RequiredPermission = permissionName
@@ -73,9 +72,8 @@ public class AuthorizationServiceTests
         var service = CreateService();
 
         // Act
-        var result = await service.AuthorizeAsync(new AuthorizeRequest
+        var result = await service.AuthorizeAsync(_userId, new AuthorizeRequest
         {
-            UserId = _userId,
             AppSlug = "my-app",
             ResourceIdentifier = "doc/123",
             RequiredPermission = "resource:delete"
@@ -88,29 +86,20 @@ public class AuthorizationServiceTests
     [Fact]
     public async Task Authorize_ShouldReturnDenied_WhenRoleExpired()
     {
-        // Arrange
+        // Arrange — SQL filters expired roles; repo returns empty
         _apps.Setup(a => a.GetBySlugAsync("my-app"))
             .ReturnsAsync(new App { Id = _appId, Slug = "my-app", Name = "My App" });
 
         _userAppRoles.Setup(u => u.GetActiveByUserAndAppAsync(_userId, _appId))
-            .ReturnsAsync(new[]
-            {
-                new UserAppRole
-                {
-                    Id = Guid.NewGuid(), UserId = _userId, AppId = _appId, RoleId = _roleId,
-                    Status = "active",
-                    ExpiresAt = DateTime.UtcNow.AddDays(-1)   // expired yesterday
-                }
-            });
+            .ReturnsAsync(Enumerable.Empty<UserAppRole>());
 
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
         var service = CreateService();
 
         // Act
-        var result = await service.AuthorizeAsync(new AuthorizeRequest
+        var result = await service.AuthorizeAsync(_userId, new AuthorizeRequest
         {
-            UserId = _userId,
             AppSlug = "my-app",
             ResourceIdentifier = "doc/123",
             RequiredPermission = "resource:read"
@@ -123,28 +112,20 @@ public class AuthorizationServiceTests
     [Fact]
     public async Task Authorize_ShouldReturnDenied_WhenRoleSuspended()
     {
-        // Arrange
+        // Arrange — SQL filters suspended roles; repo returns empty
         _apps.Setup(a => a.GetBySlugAsync("my-app"))
             .ReturnsAsync(new App { Id = _appId, Slug = "my-app", Name = "My App" });
 
         _userAppRoles.Setup(u => u.GetActiveByUserAndAppAsync(_userId, _appId))
-            .ReturnsAsync(new[]
-            {
-                new UserAppRole
-                {
-                    Id = Guid.NewGuid(), UserId = _userId, AppId = _appId, RoleId = _roleId,
-                    Status = "suspended"
-                }
-            });
+            .ReturnsAsync(Enumerable.Empty<UserAppRole>());
 
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
         var service = CreateService();
 
         // Act
-        var result = await service.AuthorizeAsync(new AuthorizeRequest
+        var result = await service.AuthorizeAsync(_userId, new AuthorizeRequest
         {
-            UserId = _userId,
             AppSlug = "my-app",
             ResourceIdentifier = "doc/123",
             RequiredPermission = "resource:read"

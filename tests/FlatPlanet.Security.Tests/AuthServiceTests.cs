@@ -180,7 +180,7 @@ public class AuthServiceTests
         var service = CreateService();
 
         // Act
-        await service.LogoutAsync(sessionId, userId, "1.2.3.4");
+        await service.LogoutAsync((Guid?)sessionId, userId, "1.2.3.4");
 
         // Assert
         _sessions.Verify(s => s.EndSessionAsync(sessionId, "logout"), Times.Once);
@@ -194,8 +194,11 @@ public class AuthServiceTests
         var userId = Guid.NewGuid();
         var tokenId = Guid.NewGuid();
 
-        _securityConfig.Setup(s => s.GetIntValueAsync("jwt_refresh_expiry_days", 7)).ReturnsAsync(7);
-        _securityConfig.Setup(s => s.GetIntValueAsync("jwt_access_expiry_minutes", 60)).ReturnsAsync(60);
+        _securityConfig.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<SecurityConfig>
+        {
+            new() { ConfigKey = "jwt_refresh_expiry_days", ConfigValue = "7" },
+            new() { ConfigKey = "jwt_access_expiry_minutes", ConfigValue = "60" }
+        });
 
         _jwt.Setup(j => j.HashToken("valid-token")).Returns("valid-hash");
         _refreshTokens.Setup(r => r.GetByTokenHashAsync("valid-hash"))

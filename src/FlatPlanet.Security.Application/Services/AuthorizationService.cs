@@ -29,16 +29,16 @@ public class AuthorizationService : IAccessAuthorizationService
         _auditLog = auditLog;
     }
 
-    public async Task<AuthorizeResponse> AuthorizeAsync(AuthorizeRequest request, string? ipAddress)
+    public async Task<AuthorizeResponse> AuthorizeAsync(Guid userId, AuthorizeRequest request, string? ipAddress)
     {
         var app = await _apps.GetBySlugAsync(request.AppSlug)
             ?? throw new KeyNotFoundException($"App '{request.AppSlug}' not found.");
 
-        var userAppRoles = (await _userAppRoles.GetActiveByUserAndAppAsync(request.UserId, app.Id)).ToList();
+        var userAppRoles = (await _userAppRoles.GetActiveByUserAndAppAsync(userId, app.Id)).ToList();
 
         if (!userAppRoles.Any())
         {
-            await LogAuthCheckAsync(request, app.Id, ipAddress, allowed: false);
+            await LogAuthCheckAsync(userId, request, app.Id, ipAddress, allowed: false);
             return new AuthorizeResponse { Allowed = false };
         }
 
@@ -50,7 +50,7 @@ public class AuthorizationService : IAccessAuthorizationService
 
         var allowed = permissionNames.Contains(request.RequiredPermission);
 
-        await LogAuthCheckAsync(request, app.Id, ipAddress, allowed);
+        await LogAuthCheckAsync(userId, request, app.Id, ipAddress, allowed);
 
         return new AuthorizeResponse
         {
@@ -60,16 +60,14 @@ public class AuthorizationService : IAccessAuthorizationService
         };
     }
 
-    private async Task LogAuthCheckAsync(AuthorizeRequest request, Guid appId, string? ipAddress, bool allowed)
+    private async Task LogAuthCheckAsync(Guid userId, AuthorizeRequest request, Guid appId, string? ipAddress, bool allowed)
     {
         await _auditLog.LogAsync(new AuthAuditLog
         {
-            UserId = request.UserId,
+            UserId = userId,
             AppId = appId,
-            // Fix 9: use AuditEventType constants
             EventType = allowed ? AuditEventType.AuthorizeAllowed : AuditEventType.AuthorizeDenied,
             IpAddress = ipAddress,
-            // Fix 4: JsonSerializer prevents injection
             Details = JsonSerializer.Serialize(new
             {
                 resource = request.ResourceIdentifier,

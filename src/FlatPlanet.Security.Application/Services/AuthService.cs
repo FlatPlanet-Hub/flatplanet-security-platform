@@ -200,9 +200,10 @@ public class AuthService : IAuthService
         };
     }
 
-    public async Task LogoutAsync(Guid sessionId, Guid userId, string? ipAddress)
+    public async Task LogoutAsync(Guid? sessionId, Guid userId, string? ipAddress)
     {
-        await _sessions.EndSessionAsync(sessionId, "logout");
+        if (sessionId.HasValue)
+            await _sessions.EndSessionAsync(sessionId.Value, "logout");
         await _refreshTokens.RevokeAllByUserAsync(userId, "logout");
         await _auditLog.LogAsync(new AuthAuditLog
         {
@@ -215,6 +216,11 @@ public class AuthService : IAuthService
 
     public async Task<RefreshResponse> RefreshAsync(RefreshRequest request, string? ipAddress)
     {
+        var allConfig = (await _securityConfig.GetAllAsync())
+            .ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
+        int Cfg(string key, int def) =>
+            allConfig.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
+
         var tokenHash = _jwt.HashToken(request.RefreshToken);
         var stored = await _refreshTokens.GetByTokenHashAsync(tokenHash);
 
@@ -227,7 +233,7 @@ public class AuthService : IAuthService
         if (user.Status != "active")
             throw new ForbiddenException($"User account is {user.Status}.");
 
-        var refreshExpiryDays = await _securityConfig.GetIntValueAsync("jwt_refresh_expiry_days", 7);
+        var refreshExpiryDays = Cfg("jwt_refresh_expiry_days", 7);
 
         await _refreshTokens.RevokeAsync(stored.Id, "rotated");
 
@@ -243,11 +249,10 @@ public class AuthService : IAuthService
         if (stored.SessionId.HasValue)
             await _sessions.UpdateLastActiveAtAsync(stored.SessionId.Value, DateTime.UtcNow);
 
-        // Fix 1: include session_id + platform roles in refreshed token
         var sessionId = stored.SessionId ?? Guid.Empty;
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
         var accessToken = _jwt.IssueAccessToken(user, sessionId, platformRoles);
-        var accessExpiryMinutes = await _securityConfig.GetIntValueAsync("jwt_access_expiry_minutes", 60);
+        var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
 
         await _auditLog.LogAsync(new AuthAuditLog
         {

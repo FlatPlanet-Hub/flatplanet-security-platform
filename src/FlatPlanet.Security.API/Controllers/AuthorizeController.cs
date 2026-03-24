@@ -19,27 +19,18 @@ public class AuthorizeController : ControllerBase
     }
 
     [HttpPost("authorize")]
-    public async Task<IActionResult> Authorize([FromBody] AuthorizeRequestBody body)
+    public async Task<IActionResult> Authorize([FromBody] AuthorizeRequest request)
     {
-        if (string.IsNullOrWhiteSpace(body.AppSlug))
+        if (string.IsNullOrWhiteSpace(request.AppSlug))
             return BadRequest(new { success = false, message = "appSlug is required." });
 
-        // Fix 2: userId always comes from the JWT — never from the request body
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
         if (!Guid.TryParse(sub, out var userId))
             return Unauthorized(new { success = false, message = "Invalid token." });
 
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
 
-        var request = new AuthorizeRequest
-        {
-            UserId = userId,
-            AppSlug = body.AppSlug,
-            ResourceIdentifier = body.ResourceIdentifier,
-            RequiredPermission = body.RequiredPermission
-        };
-
-        var result = await _authorizationService.AuthorizeAsync(request, ipAddress);
+        var result = await _authorizationService.AuthorizeAsync(userId, request, ipAddress);
         return Ok(new { success = true, data = result });
     }
 }
