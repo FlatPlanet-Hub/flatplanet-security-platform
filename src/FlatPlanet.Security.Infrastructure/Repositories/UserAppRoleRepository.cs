@@ -71,6 +71,14 @@ public class UserAppRoleRepository : IUserAppRoleRepository
             new { UserId = userId });
     }
 
+    public async Task<IEnumerable<UserAppRole>> GetActiveByAppIdAsync(Guid appId)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        return await conn.QueryAsync<UserAppRole>(
+            "SELECT * FROM user_app_roles WHERE app_id = @AppId AND status = 'active'",
+            new { AppId = appId });
+    }
+
     public async Task<bool> HasUsersAssignedAsync(Guid roleId)
     {
         using var conn = await _db.CreateConnectionAsync();
