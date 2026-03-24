@@ -8,7 +8,7 @@ namespace FlatPlanet.Security.API.Controllers;
 
 [ApiController]
 [Route("api/v1/apps/{appId:guid}/users")]
-[Authorize]
+[Authorize(Policy = "AdminAccess")]
 public class UserAccessController : ControllerBase
 {
     private readonly IUserAccessService _userAccess;
@@ -26,7 +26,8 @@ public class UserAccessController : ControllerBase
     public async Task<IActionResult> GrantAccess(Guid appId, [FromBody] GrantUserAccessRequest request)
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        Guid.TryParse(sub, out var grantedBy);
+        if (!Guid.TryParse(sub, out var grantedBy))
+            throw new UnauthorizedAccessException("Invalid token: user ID claim missing.");
         var result = await _userAccess.GrantAccessAsync(appId, request, grantedBy);
         return StatusCode(201, new { success = true, data = result });
     }

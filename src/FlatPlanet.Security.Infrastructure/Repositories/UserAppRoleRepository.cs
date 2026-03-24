@@ -15,7 +15,7 @@ public class UserAppRoleRepository : IUserAppRoleRepository
     {
         using var conn = await _db.CreateConnectionAsync();
         return await conn.QueryAsync<UserAppRole>(
-            "SELECT * FROM user_app_roles WHERE user_id = @UserId AND status = 'active'",
+            "SELECT * FROM user_app_roles WHERE user_id = @UserId AND status = 'active' AND (expires_at IS NULL OR expires_at > now())",
             new { UserId = userId });
     }
 
@@ -23,7 +23,7 @@ public class UserAppRoleRepository : IUserAppRoleRepository
     {
         using var conn = await _db.CreateConnectionAsync();
         return await conn.QueryAsync<UserAppRole>(
-            "SELECT * FROM user_app_roles WHERE user_id = @UserId AND app_id = @AppId AND status = 'active'",
+            "SELECT * FROM user_app_roles WHERE user_id = @UserId AND app_id = @AppId AND status = 'active' AND (expires_at IS NULL OR expires_at > now())",
             new { UserId = userId, AppId = appId });
     }
 

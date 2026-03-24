@@ -7,7 +7,7 @@ namespace FlatPlanet.Security.API.Controllers;
 
 [ApiController]
 [Route("api/v1/audit")]
-[Authorize]
+[Authorize(Policy = "AdminAccess")]
 public class AuditController : ControllerBase
 {
     private readonly IAuditLogRepository _auditLog;

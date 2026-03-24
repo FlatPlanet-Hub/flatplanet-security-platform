@@ -35,7 +35,7 @@ public class AuthController : ControllerBase
     public async Task<IActionResult> Logout()
     {
         var userId = GetUserId();
-        var sessionId = GetSessionId();
+        var sessionId = TryGetSessionId();
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
 
         await _authService.LogoutAsync(sessionId, userId, ipAddress);
@@ -70,9 +70,9 @@ public class AuthController : ControllerBase
         return Guid.Parse(sub);
     }
 
-    private Guid GetSessionId()
+    private Guid? TryGetSessionId()
     {
         var sessionId = User.FindFirstValue("session_id");
-        return sessionId is not null ? Guid.Parse(sessionId) : Guid.Empty;
+        return Guid.TryParse(sessionId, out var id) ? id : null;
     }
 }

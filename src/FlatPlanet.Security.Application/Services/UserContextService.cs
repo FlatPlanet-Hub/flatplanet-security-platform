@@ -41,9 +41,7 @@ public class UserContextService : IUserContextService
             ?? throw new KeyNotFoundException($"App '{appSlug}' not found.");
 
         // All active non-expired roles across all apps (for allowedApps)
-        var allUserRoles = (await _userAppRoles.GetActiveByUserAsync(userId))
-            .Where(r => r.Status == "active" && (r.ExpiresAt == null || r.ExpiresAt > DateTime.UtcNow))
-            .ToList();
+        var allUserRoles = (await _userAppRoles.GetActiveByUserAsync(userId)).ToList();
 
         // Roles for the requested app
         var appRoleIds = allUserRoles

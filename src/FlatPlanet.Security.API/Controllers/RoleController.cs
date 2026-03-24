@@ -8,7 +8,7 @@ namespace FlatPlanet.Security.API.Controllers;
 
 [ApiController]
 [Route("api/v1/apps/{appId:guid}/roles")]
-[Authorize]
+[Authorize(Policy = "AdminAccess")]
 public class RoleController : ControllerBase
 {
     private readonly IRoleService _roles;
@@ -47,7 +47,8 @@ public class RoleController : ControllerBase
     public async Task<IActionResult> AssignPermission(Guid appId, Guid roleId, [FromBody] AssignPermissionRequest request)
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        Guid.TryParse(sub, out var userId);
+        if (!Guid.TryParse(sub, out var userId))
+            throw new UnauthorizedAccessException("Invalid token: user ID claim missing.");
         await _roles.AssignPermissionAsync(roleId, request.PermissionId, userId);
         return Ok(new { success = true, message = "Permission assigned." });
     }

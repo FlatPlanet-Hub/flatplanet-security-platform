@@ -41,7 +41,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         };
     });
 
-builder.Services.AddAuthorization();
+builder.Services.AddAuthorization(options =>
+{
+    options.AddPolicy("PlatformOwner", policy => policy.RequireRole("platform_owner"));
+    options.AddPolicy("AdminAccess", policy => policy.RequireRole("platform_owner", "app_admin"));
+});
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks();
 

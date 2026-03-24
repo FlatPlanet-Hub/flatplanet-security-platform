@@ -7,7 +7,7 @@ namespace FlatPlanet.Security.API.Controllers;
 
 [ApiController]
 [Route("api/v1/companies")]
-[Authorize]
+[Authorize(Policy = "PlatformOwner")]
 public class CompanyController : ControllerBase
 {
     private readonly ICompanyService _companies;
