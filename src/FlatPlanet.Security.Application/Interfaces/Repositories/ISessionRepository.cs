@@ -11,4 +11,5 @@ public interface ISessionRepository
     Task EndSessionAsync(Guid sessionId, string reason);
     Task EndAllActiveSessionsByUserAsync(Guid userId, string reason);
     Task UpdateLastActiveAtAsync(Guid sessionId, DateTime lastActiveAt);
+    Task<IEnumerable<Session>> GetAllByUserIdAsync(Guid userId);
 }

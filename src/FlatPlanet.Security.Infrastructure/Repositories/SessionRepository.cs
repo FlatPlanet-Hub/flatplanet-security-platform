@@ -80,4 +80,12 @@ public class SessionRepository : ISessionRepository
             "UPDATE sessions SET last_active_at = @LastActiveAt WHERE id = @Id",
             new { LastActiveAt = lastActiveAt, Id = sessionId });
     }
+
+    public async Task<IEnumerable<Session>> GetAllByUserIdAsync(Guid userId)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        return await conn.QueryAsync<Session>(
+            "SELECT * FROM sessions WHERE user_id = @UserId ORDER BY started_at DESC",
+            new { UserId = userId });
+    }
 }
