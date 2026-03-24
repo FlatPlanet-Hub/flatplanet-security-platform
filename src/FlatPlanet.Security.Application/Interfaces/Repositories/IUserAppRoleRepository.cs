@@ -11,5 +11,6 @@ public interface IUserAppRoleRepository
     Task UpdateStatusAsync(Guid id, string status);
     Task UpdateRoleAsync(Guid id, Guid roleId);
     Task SuspendAllByUserAsync(Guid userId);
+    Task<IEnumerable<UserAppRole>> GetActiveByAppIdAsync(Guid appId);
     Task<bool> HasUsersAssignedAsync(Guid roleId);
 }

@@ -30,6 +30,28 @@ public class UserRepository : IUserRepository
             new { Email = email });
     }
 
+    public async Task<IEnumerable<User>> GetAllAsync()
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        return await conn.QueryAsync<User>("SELECT * FROM users ORDER BY full_name");
+    }
+
+    public async Task<IEnumerable<User>> GetByCompanyIdAsync(Guid companyId)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        return await conn.QueryAsync<User>(
+            "SELECT * FROM users WHERE company_id = @CompanyId",
+            new { CompanyId = companyId });
+    }
+
+    public async Task UpdateAsync(User user)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET full_name = @FullName, role_title = @RoleTitle WHERE id = @Id",
+            user);
+    }
+
     public async Task UpdateLastSeenAtAsync(Guid userId, DateTime lastSeenAt)
     {
         using var conn = await _db.CreateConnectionAsync();
