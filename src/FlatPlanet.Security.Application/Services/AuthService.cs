@@ -1,5 +1,7 @@
+using System.Text.Json;
 using FlatPlanet.Security.Application.Common.Exceptions;
 using FlatPlanet.Security.Application.DTOs.Auth;
+using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Domain.Entities;
@@ -17,6 +19,8 @@ public class AuthService : IAuthService
     private readonly ILoginAttemptRepository _loginAttempts;
     private readonly IAuditLogRepository _auditLog;
     private readonly ISecurityConfigRepository _securityConfig;
+    private readonly IRoleRepository _roles;
+    private readonly IDbConnectionFactory _db;
 
     public AuthService(
         ISupabaseAuthClient supabaseAuth,
@@ -26,7 +30,9 @@ public class AuthService : IAuthService
         IRefreshTokenRepository refreshTokens,
         ILoginAttemptRepository loginAttempts,
         IAuditLogRepository auditLog,
-        ISecurityConfigRepository securityConfig)
+        ISecurityConfigRepository securityConfig,
+        IRoleRepository roles,
+        IDbConnectionFactory db)
     {
         _supabaseAuth = supabaseAuth;
         _jwt = jwt;
@@ -36,31 +42,39 @@ public class AuthService : IAuthService
         _loginAttempts = loginAttempts;
         _auditLog = auditLog;
         _securityConfig = securityConfig;
+        _roles = roles;
+        _db = db;
     }
 
     public async Task<LoginResponse> LoginAsync(LoginRequest request, string? ipAddress, string? userAgent)
     {
         var now = DateTime.UtcNow;
 
-        // 1. Rate limit check — IP
+        // Fix 7: load all config in one call
+        var allConfig = (await _securityConfig.GetAllAsync())
+            .ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
+        int Cfg(string key, int def) =>
+            allConfig.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
+
+        // 1. Rate limit check (Fix 11: count only failures from this IP)
         if (!string.IsNullOrEmpty(ipAddress))
         {
-            var rateLimitPerIp = await _securityConfig.GetIntValueAsync("rate_limit_login_per_ip_per_minute", 5);
-            var ipAttempts = await _loginAttempts.CountRecentByIpAsync(ipAddress, now.AddMinutes(-1));
-            if (ipAttempts >= rateLimitPerIp)
+            var rateLimitPerIp = Cfg("rate_limit_login_per_ip_per_minute", 5);
+            var ipFailures = await _loginAttempts.CountRecentFailuresByIpAsync(ipAddress, now.AddMinutes(-1));
+            if (ipFailures >= rateLimitPerIp)
                 throw new TooManyRequestsException("Too many login attempts from this IP.");
         }
 
         // 2. Account lockout check
-        var maxFailures = await _securityConfig.GetIntValueAsync("max_failed_login_attempts", 5);
-        var lockoutMinutes = await _securityConfig.GetIntValueAsync("lockout_duration_minutes", 30);
+        var maxFailures = Cfg("max_failed_login_attempts", 5);
+        var lockoutMinutes = Cfg("lockout_duration_minutes", 30);
         var recentFailures = await _loginAttempts.CountRecentFailuresByEmailAsync(
             request.Email, now.AddMinutes(-lockoutMinutes));
 
         if (recentFailures >= maxFailures)
             throw new AccountLockedException("Account is temporarily locked. Please try again later.");
 
-        // 3. Verify with Supabase Auth
+        // 3. Verify with Supabase Auth (Fix 12: throws on infra errors)
         var authResult = await _supabaseAuth.SignInAsync(request.Email, request.Password);
 
         if (authResult is null)
@@ -72,13 +86,14 @@ public class AuthService : IAuthService
                 Success = false,
                 AttemptedAt = now
             });
+            // Fix 4: use JsonSerializer — no injection risk
             await _auditLog.LogAsync(new AuthAuditLog
             {
                 UserId = null,
                 EventType = AuditEventType.LoginFailure,
                 IpAddress = ipAddress,
                 UserAgent = userAgent,
-                Details = $"{{\"email\":\"{request.Email}\"}}"
+                Details = JsonSerializer.Serialize(new { email = request.Email })
             });
             throw new UnauthorizedAccessException("Invalid email or password.");
         }
@@ -92,9 +107,8 @@ public class AuthService : IAuthService
             throw new ForbiddenException($"User account is {user.Status}.");
 
         // 6. Session limit check
-        var maxSessions = await _securityConfig.GetIntValueAsync("max_concurrent_sessions", 3);
+        var maxSessions = Cfg("max_concurrent_sessions", 3);
         var activeSessions = await _sessions.CountActiveByUserAsync(user.Id);
-
         if (activeSessions >= maxSessions)
         {
             var oldest = await _sessions.GetOldestActiveByUserAsync(user.Id);
@@ -102,32 +116,51 @@ public class AuthService : IAuthService
                 await _sessions.EndSessionAsync(oldest.Id, "replaced");
         }
 
-        // 7. Create session
-        var idleTimeout = await _securityConfig.GetIntValueAsync("session_idle_timeout_minutes", 30);
-        var absoluteTimeout = await _securityConfig.GetIntValueAsync("session_absolute_timeout_minutes", 480);
+        // Fix 5: wrap session + refresh token creation in a transaction
+        var absoluteTimeout = Cfg("session_absolute_timeout_minutes", 480);
+        var refreshExpiryDays = Cfg("jwt_refresh_expiry_days", 7);
 
-        var session = await _sessions.CreateAsync(new Session
+        Session session;
+        string refreshTokenPlain;
+
+        using (var conn = await _db.CreateConnectionAsync())
+        using (var tx = conn.BeginTransaction())
         {
-            UserId = user.Id,
-            IpAddress = ipAddress,
-            UserAgent = userAgent,
-            ExpiresAt = now.AddMinutes(absoluteTimeout)
-        });
+            try
+            {
+                session = await _sessions.CreateAsync(new Session
+                {
+                    UserId = user.Id,
+                    IpAddress = ipAddress,
+                    UserAgent = userAgent,
+                    ExpiresAt = now.AddMinutes(absoluteTimeout)
+                }, conn, tx);
 
-        // 8. Issue JWT + refresh token
-        var accessToken = _jwt.IssueAccessToken(user);
-        var (refreshTokenPlain, refreshTokenHash) = _jwt.GenerateRefreshToken();
-        var refreshExpiryDays = await _securityConfig.GetIntValueAsync("jwt_refresh_expiry_days", 7);
+                var (plain, hash) = _jwt.GenerateRefreshToken();
+                refreshTokenPlain = plain;
 
-        await _refreshTokens.CreateAsync(new RefreshToken
-        {
-            UserId = user.Id,
-            SessionId = session.Id,
-            TokenHash = refreshTokenHash,
-            ExpiresAt = now.AddDays(refreshExpiryDays)
-        });
+                await _refreshTokens.CreateAsync(new RefreshToken
+                {
+                    UserId = user.Id,
+                    SessionId = session.Id,
+                    TokenHash = hash,
+                    ExpiresAt = now.AddDays(refreshExpiryDays)
+                }, conn, tx);
 
-        // 9. Audit log
+                tx.Commit();
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+        }
+
+        // Fix 1: include session_id + platform roles in JWT
+        var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
+        var accessToken = _jwt.IssueAccessToken(user, session.Id, platformRoles);
+        var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
+
         await _auditLog.LogAsync(new AuthAuditLog
         {
             UserId = user.Id,
@@ -141,13 +174,9 @@ public class AuthService : IAuthService
             EventType = AuditEventType.SessionStart,
             IpAddress = ipAddress,
             UserAgent = userAgent,
-            Details = $"{{\"session_id\":\"{session.Id}\"}}"
+            Details = JsonSerializer.Serialize(new { session_id = session.Id })
         });
-
-        // 10. Update last_seen_at
         await _users.UpdateLastSeenAtAsync(user.Id, now);
-
-        // 11. Record success
         await _loginAttempts.RecordAsync(new LoginAttempt
         {
             Email = request.Email,
@@ -155,8 +184,6 @@ public class AuthService : IAuthService
             Success = true,
             AttemptedAt = now
         });
-
-        var accessExpiryMinutes = await _securityConfig.GetIntValueAsync("jwt_access_expiry_minutes", 60);
 
         return new LoginResponse
         {
@@ -182,7 +209,7 @@ public class AuthService : IAuthService
             UserId = userId,
             EventType = AuditEventType.Logout,
             IpAddress = ipAddress,
-            Details = $"{{\"session_id\":\"{sessionId}\"}}"
+            Details = JsonSerializer.Serialize(new { session_id = sessionId })
         });
     }
 
@@ -200,12 +227,11 @@ public class AuthService : IAuthService
         if (user.Status != "active")
             throw new ForbiddenException($"User account is {user.Status}.");
 
-        // Rotate token
+        var refreshExpiryDays = await _securityConfig.GetIntValueAsync("jwt_refresh_expiry_days", 7);
+
         await _refreshTokens.RevokeAsync(stored.Id, "rotated");
 
         var (newTokenPlain, newTokenHash) = _jwt.GenerateRefreshToken();
-        var refreshExpiryDays = await _securityConfig.GetIntValueAsync("jwt_refresh_expiry_days", 7);
-
         await _refreshTokens.CreateAsync(new RefreshToken
         {
             UserId = user.Id,
@@ -217,7 +243,10 @@ public class AuthService : IAuthService
         if (stored.SessionId.HasValue)
             await _sessions.UpdateLastActiveAtAsync(stored.SessionId.Value, DateTime.UtcNow);
 
-        var accessToken = _jwt.IssueAccessToken(user);
+        // Fix 1: include session_id + platform roles in refreshed token
+        var sessionId = stored.SessionId ?? Guid.Empty;
+        var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
+        var accessToken = _jwt.IssueAccessToken(user, sessionId, platformRoles);
         var accessExpiryMinutes = await _securityConfig.GetIntValueAsync("jwt_access_expiry_minutes", 60);
 
         await _auditLog.LogAsync(new AuthAuditLog

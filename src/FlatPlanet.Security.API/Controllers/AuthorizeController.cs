@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using FlatPlanet.Security.Application.DTOs.Authorization;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -18,12 +19,26 @@ public class AuthorizeController : ControllerBase
     }
 
     [HttpPost("authorize")]
-    public async Task<IActionResult> Authorize([FromBody] AuthorizeRequest request)
+    public async Task<IActionResult> Authorize([FromBody] AuthorizeRequestBody body)
     {
-        if (request.UserId == Guid.Empty || string.IsNullOrWhiteSpace(request.AppSlug))
-            return BadRequest(new { success = false, message = "userId and appSlug are required." });
+        if (string.IsNullOrWhiteSpace(body.AppSlug))
+            return BadRequest(new { success = false, message = "appSlug is required." });
+
+        // Fix 2: userId always comes from the JWT — never from the request body
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!Guid.TryParse(sub, out var userId))
+            return Unauthorized(new { success = false, message = "Invalid token." });
 
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+
+        var request = new AuthorizeRequest
+        {
+            UserId = userId,
+            AppSlug = body.AppSlug,
+            ResourceIdentifier = body.ResourceIdentifier,
+            RequiredPermission = body.RequiredPermission
+        };
+
         var result = await _authorizationService.AuthorizeAsync(request, ipAddress);
         return Ok(new { success = true, data = result });
     }

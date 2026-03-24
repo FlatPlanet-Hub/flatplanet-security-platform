@@ -18,4 +18,6 @@ public static class AuditEventType
     public const string UserOffboarded = "user_offboarded";
     public const string AccountLocked = "account_locked";
     public const string AccountUnlocked = "account_unlocked";
+    public const string AuthorizeAllowed = "authorize_allowed";
+    public const string AuthorizeDenied = "authorize_denied";
 }

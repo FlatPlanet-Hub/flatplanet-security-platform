@@ -1,3 +1,4 @@
+using System.Data;
 using Dapper;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
@@ -24,6 +25,19 @@ public class RefreshTokenRepository : IRefreshTokenRepository
             RETURNING id
             """,
             token);
+        token.Id = id;
+        return token;
+    }
+
+    public async Task<RefreshToken> CreateAsync(RefreshToken token, IDbConnection conn, IDbTransaction tx)
+    {
+        var id = await conn.QuerySingleAsync<Guid>(
+            """
+            INSERT INTO refresh_tokens (user_id, session_id, token_hash, expires_at)
+            VALUES (@UserId, @SessionId, @TokenHash, @ExpiresAt)
+            RETURNING id
+            """,
+            token, transaction: tx);
         token.Id = id;
         return token;
     }

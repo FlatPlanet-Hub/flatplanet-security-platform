@@ -72,7 +72,8 @@ public class AuthController : ControllerBase
 
     private Guid GetSessionId()
     {
-        var sessionId = User.FindFirstValue("session_id");
-        return sessionId is not null ? Guid.Parse(sessionId) : Guid.Empty;
+        var sessionId = User.FindFirstValue("session_id")
+            ?? throw new UnauthorizedAccessException("Invalid token: session_id claim missing.");
+        return Guid.Parse(sessionId);
     }
 }

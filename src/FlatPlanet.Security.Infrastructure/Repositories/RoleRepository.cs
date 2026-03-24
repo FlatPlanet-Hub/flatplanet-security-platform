@@ -34,6 +34,21 @@ public class RoleRepository : IRoleRepository
             new { Ids = ids.ToArray() });
     }
 
+    public async Task<IEnumerable<string>> GetPlatformRoleNamesForUserAsync(Guid userId)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        return await conn.QueryAsync<string>(
+            """
+            SELECT DISTINCT r.name FROM roles r
+            INNER JOIN user_app_roles uar ON uar.role_id = r.id
+            WHERE uar.user_id = @UserId
+              AND r.is_platform_role = true
+              AND uar.status = 'active'
+              AND (uar.expires_at IS NULL OR uar.expires_at > NOW())
+            """,
+            new { UserId = userId });
+    }
+
     public async Task<Role> CreateAsync(Role role)
     {
         using var conn = await _db.CreateConnectionAsync();

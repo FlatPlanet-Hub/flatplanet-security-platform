@@ -7,7 +7,7 @@ namespace FlatPlanet.Security.API.Controllers;
 
 [ApiController]
 [Route("api/v1/users")]
-[Authorize]
+[Authorize(Policy = "AdminAccess")]
 public class ComplianceController : ControllerBase
 {
     private readonly IComplianceService _compliance;
@@ -25,7 +25,8 @@ public class ComplianceController : ControllerBase
     public async Task<IActionResult> Anonymize(Guid id)
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        Guid.TryParse(sub, out var requestedBy);
+        if (!Guid.TryParse(sub, out var requestedBy))
+            throw new UnauthorizedAccessException("Invalid token: user ID claim missing.");
         await _compliance.AnonymizeUserAsync(id, requestedBy);
         return Ok(new { success = true, message = "User data anonymized." });
     }

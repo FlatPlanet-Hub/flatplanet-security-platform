@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FlatPlanet.Security.Application.DTOs.Authorization;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
@@ -33,9 +34,9 @@ public class AuthorizationService : IAccessAuthorizationService
         var app = await _apps.GetBySlugAsync(request.AppSlug)
             ?? throw new KeyNotFoundException($"App '{request.AppSlug}' not found.");
 
-        // 1. Get active, non-expired user app roles
+        // Fix 8: SQL already filters status='active'; only add expiry check in C#
         var userAppRoles = (await _userAppRoles.GetActiveByUserAndAppAsync(request.UserId, app.Id))
-            .Where(r => r.Status == "active" && (r.ExpiresAt == null || r.ExpiresAt > DateTime.UtcNow))
+            .Where(r => r.ExpiresAt == null || r.ExpiresAt > DateTime.UtcNow)
             .ToList();
 
         if (!userAppRoles.Any())
@@ -44,15 +45,12 @@ public class AuthorizationService : IAccessAuthorizationService
             return new AuthorizeResponse { Allowed = false };
         }
 
-        // 2. Load role names
         var roleIds = userAppRoles.Select(r => r.RoleId).ToList();
         var roleNames = await _roles.GetNamesByIdsAsync(roleIds);
 
-        // 3. Load permissions for those roles
         var permissions = (await _rolePermissions.GetPermissionsByRoleIdsAsync(roleIds)).ToList();
         var permissionNames = permissions.Select(p => p.Name).Distinct().ToList();
 
-        // 4. Check if required permission is satisfied
         var allowed = permissionNames.Contains(request.RequiredPermission);
 
         await LogAuthCheckAsync(request, app.Id, ipAddress, allowed);
@@ -71,9 +69,15 @@ public class AuthorizationService : IAccessAuthorizationService
         {
             UserId = request.UserId,
             AppId = appId,
-            EventType = allowed ? "authorize_allowed" : "authorize_denied",
+            // Fix 9: use AuditEventType constants
+            EventType = allowed ? AuditEventType.AuthorizeAllowed : AuditEventType.AuthorizeDenied,
             IpAddress = ipAddress,
-            Details = $"{{\"resource\":\"{request.ResourceIdentifier}\",\"permission\":\"{request.RequiredPermission}\"}}"
+            // Fix 4: JsonSerializer prevents injection
+            Details = JsonSerializer.Serialize(new
+            {
+                resource = request.ResourceIdentifier,
+                permission = request.RequiredPermission
+            })
         });
     }
 }

@@ -36,8 +36,10 @@ public class JwtServiceTests
             Status = "active"
         };
 
+        var sessionId = Guid.NewGuid();
+
         // Act
-        var token = service.IssueAccessToken(user);
+        var token = service.IssueAccessToken(user, sessionId, new[] { "platform_owner" });
 
         // Assert
         var handler = new JwtSecurityTokenHandler();
