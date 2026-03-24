@@ -29,7 +29,6 @@ ALTER TABLE apps
 --    platform role names in PostgreSQL (NULL != NULL in unique indexes).
 --    Use a partial unique index for the platform-role case.
 -- -----------------------------------------------------------------------------
-DROP INDEX IF EXISTS roles_app_id_name_key; -- remove old constraint if needed
 ALTER TABLE roles DROP CONSTRAINT IF EXISTS roles_app_id_name_key;
 
 -- Unique name among app-scoped roles
