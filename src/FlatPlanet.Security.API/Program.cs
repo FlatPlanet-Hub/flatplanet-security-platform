@@ -55,10 +55,17 @@ builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 builder.Services.AddScoped<ILoginAttemptRepository, LoginAttemptRepository>();
 builder.Services.AddScoped<IAuditLogRepository, AuditLogRepository>();
 builder.Services.AddScoped<ISecurityConfigRepository, SecurityConfigRepository>();
+builder.Services.AddScoped<IUserAppRoleRepository, UserAppRoleRepository>();
+builder.Services.AddScoped<IRolePermissionRepository, RolePermissionRepository>();
+builder.Services.AddScoped<IAppRepository, AppRepository>();
+builder.Services.AddScoped<IRoleRepository, RoleRepository>();
+builder.Services.AddScoped<ICompanyRepository, CompanyRepository>();
 
 // Services
 builder.Services.AddScoped<IJwtService, JwtService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddScoped<IAccessAuthorizationService, AuthorizationService>();
+builder.Services.AddScoped<IUserContextService, UserContextService>();
 
 var app = builder.Build();
 
