@@ -34,10 +34,7 @@ public class AuthorizationService : IAccessAuthorizationService
         var app = await _apps.GetBySlugAsync(request.AppSlug)
             ?? throw new KeyNotFoundException($"App '{request.AppSlug}' not found.");
 
-        // Fix 8: SQL already filters status='active'; only add expiry check in C#
-        var userAppRoles = (await _userAppRoles.GetActiveByUserAndAppAsync(request.UserId, app.Id))
-            .Where(r => r.ExpiresAt == null || r.ExpiresAt > DateTime.UtcNow)
-            .ToList();
+        var userAppRoles = (await _userAppRoles.GetActiveByUserAndAppAsync(request.UserId, app.Id)).ToList();
 
         if (!userAppRoles.Any())
         {

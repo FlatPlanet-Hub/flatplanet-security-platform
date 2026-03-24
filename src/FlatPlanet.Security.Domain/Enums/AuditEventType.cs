@@ -20,4 +20,5 @@ public static class AuditEventType
     public const string AccountUnlocked = "account_unlocked";
     public const string AuthorizeAllowed = "authorize_allowed";
     public const string AuthorizeDenied = "authorize_denied";
+    public const string UserAnonymized = "user_anonymized";
 }
