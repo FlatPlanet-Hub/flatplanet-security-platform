@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/FlatPlanet.Security.API/FlatPlanet.Security.API.csproj" />
+    <Project Path="src/FlatPlanet.Security.Application/FlatPlanet.Security.Application.csproj" />
+    <Project Path="src/FlatPlanet.Security.Domain/FlatPlanet.Security.Domain.csproj" />
+    <Project Path="src/FlatPlanet.Security.Infrastructure/FlatPlanet.Security.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/FlatPlanet.Security.Tests/FlatPlanet.Security.Tests.csproj" />
+  </Folder>
+</Solution>
