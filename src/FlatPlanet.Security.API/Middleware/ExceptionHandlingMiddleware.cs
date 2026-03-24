@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using FlatPlanet.Security.Application.Common.Exceptions;
 
 namespace FlatPlanet.Security.API.Middleware;
 
@@ -31,7 +32,10 @@ public class ExceptionHandlingMiddleware
     {
         var (statusCode, message) = ex switch
         {
-            UnauthorizedAccessException => (HttpStatusCode.Unauthorized, "Unauthorized."),
+            TooManyRequestsException e => ((HttpStatusCode)429, e.Message),
+            AccountLockedException e => ((HttpStatusCode)423, e.Message),
+            ForbiddenException e => (HttpStatusCode.Forbidden, e.Message),
+            UnauthorizedAccessException e => (HttpStatusCode.Unauthorized, e.Message),
             ArgumentException e => (HttpStatusCode.BadRequest, e.Message),
             KeyNotFoundException => (HttpStatusCode.NotFound, "Resource not found."),
             InvalidOperationException e => (HttpStatusCode.Conflict, e.Message),
