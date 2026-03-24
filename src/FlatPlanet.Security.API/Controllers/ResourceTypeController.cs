@@ -7,7 +7,7 @@ namespace FlatPlanet.Security.API.Controllers;
 
 [ApiController]
 [Route("api/v1/resource-types")]
-[Authorize]
+[Authorize(Policy = "AdminAccess")]
 public class ResourceTypeController : ControllerBase
 {
     private readonly IResourceTypeService _resourceTypes;

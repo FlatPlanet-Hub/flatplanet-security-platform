@@ -1,3 +1,4 @@
+using System.Text.Json;
 using FlatPlanet.Security.Application.DTOs.Authorization;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
@@ -28,34 +29,28 @@ public class AuthorizationService : IAccessAuthorizationService
         _auditLog = auditLog;
     }
 
-    public async Task<AuthorizeResponse> AuthorizeAsync(AuthorizeRequest request, string? ipAddress)
+    public async Task<AuthorizeResponse> AuthorizeAsync(Guid userId, AuthorizeRequest request, string? ipAddress)
     {
         var app = await _apps.GetBySlugAsync(request.AppSlug)
             ?? throw new KeyNotFoundException($"App '{request.AppSlug}' not found.");
 
-        // 1. Get active, non-expired user app roles
-        var userAppRoles = (await _userAppRoles.GetActiveByUserAndAppAsync(request.UserId, app.Id))
-            .Where(r => r.Status == "active" && (r.ExpiresAt == null || r.ExpiresAt > DateTime.UtcNow))
-            .ToList();
+        var userAppRoles = (await _userAppRoles.GetActiveByUserAndAppAsync(userId, app.Id)).ToList();
 
         if (!userAppRoles.Any())
         {
-            await LogAuthCheckAsync(request, app.Id, ipAddress, allowed: false);
+            await LogAuthCheckAsync(userId, request, app.Id, ipAddress, allowed: false);
             return new AuthorizeResponse { Allowed = false };
         }
 
-        // 2. Load role names
         var roleIds = userAppRoles.Select(r => r.RoleId).ToList();
         var roleNames = await _roles.GetNamesByIdsAsync(roleIds);
 
-        // 3. Load permissions for those roles
         var permissions = (await _rolePermissions.GetPermissionsByRoleIdsAsync(roleIds)).ToList();
         var permissionNames = permissions.Select(p => p.Name).Distinct().ToList();
 
-        // 4. Check if required permission is satisfied
         var allowed = permissionNames.Contains(request.RequiredPermission);
 
-        await LogAuthCheckAsync(request, app.Id, ipAddress, allowed);
+        await LogAuthCheckAsync(userId, request, app.Id, ipAddress, allowed);
 
         return new AuthorizeResponse
         {
@@ -65,15 +60,19 @@ public class AuthorizationService : IAccessAuthorizationService
         };
     }
 
-    private async Task LogAuthCheckAsync(AuthorizeRequest request, Guid appId, string? ipAddress, bool allowed)
+    private async Task LogAuthCheckAsync(Guid userId, AuthorizeRequest request, Guid appId, string? ipAddress, bool allowed)
     {
         await _auditLog.LogAsync(new AuthAuditLog
         {
-            UserId = request.UserId,
+            UserId = userId,
             AppId = appId,
-            EventType = allowed ? "authorize_allowed" : "authorize_denied",
+            EventType = allowed ? AuditEventType.AuthorizeAllowed : AuditEventType.AuthorizeDenied,
             IpAddress = ipAddress,
-            Details = $"{{\"resource\":\"{request.ResourceIdentifier}\",\"permission\":\"{request.RequiredPermission}\"}}"
+            Details = JsonSerializer.Serialize(new
+            {
+                resource = request.ResourceIdentifier,
+                permission = request.RequiredPermission
+            })
         });
     }
 }

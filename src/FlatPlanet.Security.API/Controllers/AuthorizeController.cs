@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using FlatPlanet.Security.Application.DTOs.Authorization;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -20,11 +21,16 @@ public class AuthorizeController : ControllerBase
     [HttpPost("authorize")]
     public async Task<IActionResult> Authorize([FromBody] AuthorizeRequest request)
     {
-        if (request.UserId == Guid.Empty || string.IsNullOrWhiteSpace(request.AppSlug))
-            return BadRequest(new { success = false, message = "userId and appSlug are required." });
+        if (string.IsNullOrWhiteSpace(request.AppSlug))
+            return BadRequest(new { success = false, message = "appSlug is required." });
+
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!Guid.TryParse(sub, out var userId))
+            return Unauthorized(new { success = false, message = "Invalid token." });
 
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
-        var result = await _authorizationService.AuthorizeAsync(request, ipAddress);
+
+        var result = await _authorizationService.AuthorizeAsync(userId, request, ipAddress);
         return Ok(new { success = true, data = result });
     }
 }

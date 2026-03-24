@@ -6,5 +6,5 @@ public interface ILoginAttemptRepository
 {
     Task RecordAsync(LoginAttempt attempt);
     Task<int> CountRecentFailuresByEmailAsync(string email, DateTime since);
-    Task<int> CountRecentByIpAsync(string ipAddress, DateTime since);
+    Task<int> CountRecentFailuresByIpAsync(string ipAddress, DateTime since);
 }

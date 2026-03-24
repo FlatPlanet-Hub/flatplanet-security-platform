@@ -1,9 +1,11 @@
+using System.Text.Json;
 using FlatPlanet.Security.Application.DTOs.Admin;
 using FlatPlanet.Security.Application.DTOs.Audit;
 using FlatPlanet.Security.Application.DTOs.Compliance;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Domain.Entities;
+using FlatPlanet.Security.Domain.Enums;
 
 namespace FlatPlanet.Security.Application.Services;
 
@@ -117,8 +119,8 @@ public class ComplianceService : IComplianceService
         await _auditLog.LogAsync(new AuthAuditLog
         {
             UserId = userId,
-            EventType = "user_anonymized",
-            Details = $"{{\"requested_by\":\"{requestedBy}\"}}"
+            EventType = AuditEventType.UserAnonymized,
+            Details = JsonSerializer.Serialize(new { requested_by = requestedBy })
         });
     }
 }

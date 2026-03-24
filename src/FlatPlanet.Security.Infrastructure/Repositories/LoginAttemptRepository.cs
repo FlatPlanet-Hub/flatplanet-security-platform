@@ -18,7 +18,7 @@ public class LoginAttemptRepository : ILoginAttemptRepository
     {
         using var conn = await _db.CreateConnectionAsync();
         await conn.ExecuteAsync(
-            "INSERT INTO login_attempts (email, ip_address, success) VALUES (@Email, @IpAddress, @Success)",
+            "INSERT INTO login_attempts (email, ip_address, success, attempted_at) VALUES (@Email, @IpAddress, @Success, @AttemptedAt)",
             attempt);
     }
 
@@ -33,13 +33,13 @@ public class LoginAttemptRepository : ILoginAttemptRepository
             new { Email = email, Since = since });
     }
 
-    public async Task<int> CountRecentByIpAsync(string ipAddress, DateTime since)
+    public async Task<int> CountRecentFailuresByIpAsync(string ipAddress, DateTime since)
     {
         using var conn = await _db.CreateConnectionAsync();
         return await conn.QuerySingleAsync<int>(
             """
             SELECT COUNT(*) FROM login_attempts
-            WHERE ip_address = @IpAddress AND attempted_at >= @Since
+            WHERE ip_address = @IpAddress AND success = false AND attempted_at >= @Since
             """,
             new { IpAddress = ipAddress, Since = since });
     }

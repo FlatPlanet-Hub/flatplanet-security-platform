@@ -34,7 +34,16 @@ public class SupabaseAuthClient : ISupabaseAuthClient
         var response = await _httpClient.SendAsync(request);
 
         if (!response.IsSuccessStatusCode)
-            return null;
+        {
+            if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+                response.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                return null;
+
+            throw new HttpRequestException(
+                $"Supabase Auth returned unexpected status {(int)response.StatusCode}.",
+                null,
+                response.StatusCode);
+        }
 
         var body = await response.Content.ReadFromJsonAsync<SupabaseTokenResponse>();
 

@@ -1,3 +1,4 @@
+using System.Data;
 using Dapper;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
@@ -24,6 +25,19 @@ public class SessionRepository : ISessionRepository
             RETURNING id
             """,
             session);
+        session.Id = id;
+        return session;
+    }
+
+    public async Task<Session> CreateAsync(Session session, IDbConnection conn, IDbTransaction tx)
+    {
+        var id = await conn.QuerySingleAsync<Guid>(
+            """
+            INSERT INTO sessions (user_id, app_id, ip_address, user_agent, expires_at)
+            VALUES (@UserId, @AppId, @IpAddress, @UserAgent, @ExpiresAt)
+            RETURNING id
+            """,
+            session, transaction: tx);
         session.Id = id;
         return session;
     }

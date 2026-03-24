@@ -7,7 +7,7 @@ namespace FlatPlanet.Security.API.Controllers;
 
 [ApiController]
 [Route("api/v1/apps/{appId:guid}/permissions")]
-[Authorize]
+[Authorize(Policy = "AdminAccess")]
 public class PermissionController : ControllerBase
 {
     private readonly IPermissionService _permissions;

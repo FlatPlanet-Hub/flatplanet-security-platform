@@ -1,5 +1,7 @@
+using System.Data;
 using FlatPlanet.Security.Application.Common.Exceptions;
 using FlatPlanet.Security.Application.DTOs.Auth;
+using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
@@ -18,22 +20,36 @@ public class AuthServiceTests
     private readonly Mock<ILoginAttemptRepository> _loginAttempts = new();
     private readonly Mock<IAuditLogRepository> _auditLog = new();
     private readonly Mock<ISecurityConfigRepository> _securityConfig = new();
+    private readonly Mock<IRoleRepository> _roles = new();
+    private readonly Mock<IDbConnectionFactory> _db = new();
+    private readonly Mock<IDbConnection> _conn = new();
+    private readonly Mock<IDbTransaction> _tx = new();
 
     private AuthService CreateService() => new(
         _supabaseAuth.Object, _jwt.Object, _users.Object,
         _sessions.Object, _refreshTokens.Object,
-        _loginAttempts.Object, _auditLog.Object, _securityConfig.Object);
+        _loginAttempts.Object, _auditLog.Object, _securityConfig.Object,
+        _roles.Object, _db.Object);
 
     private void SetupDefaultConfig()
     {
-        _securityConfig.Setup(s => s.GetIntValueAsync("rate_limit_login_per_ip_per_minute", 5)).ReturnsAsync(5);
-        _securityConfig.Setup(s => s.GetIntValueAsync("max_failed_login_attempts", 5)).ReturnsAsync(5);
-        _securityConfig.Setup(s => s.GetIntValueAsync("lockout_duration_minutes", 30)).ReturnsAsync(30);
-        _securityConfig.Setup(s => s.GetIntValueAsync("max_concurrent_sessions", 3)).ReturnsAsync(3);
-        _securityConfig.Setup(s => s.GetIntValueAsync("session_idle_timeout_minutes", 30)).ReturnsAsync(30);
-        _securityConfig.Setup(s => s.GetIntValueAsync("session_absolute_timeout_minutes", 480)).ReturnsAsync(480);
-        _securityConfig.Setup(s => s.GetIntValueAsync("jwt_refresh_expiry_days", 7)).ReturnsAsync(7);
-        _securityConfig.Setup(s => s.GetIntValueAsync("jwt_access_expiry_minutes", 60)).ReturnsAsync(60);
+        var configs = new List<SecurityConfig>
+        {
+            new() { ConfigKey = "rate_limit_login_per_ip_per_minute", ConfigValue = "5" },
+            new() { ConfigKey = "max_failed_login_attempts", ConfigValue = "5" },
+            new() { ConfigKey = "lockout_duration_minutes", ConfigValue = "30" },
+            new() { ConfigKey = "max_concurrent_sessions", ConfigValue = "3" },
+            new() { ConfigKey = "session_absolute_timeout_minutes", ConfigValue = "480" },
+            new() { ConfigKey = "jwt_refresh_expiry_days", ConfigValue = "7" },
+            new() { ConfigKey = "jwt_access_expiry_minutes", ConfigValue = "60" },
+        };
+        _securityConfig.Setup(s => s.GetAllAsync()).ReturnsAsync(configs);
+    }
+
+    private void SetupTransaction()
+    {
+        _conn.Setup(c => c.BeginTransaction()).Returns(_tx.Object);
+        _db.Setup(d => d.CreateConnectionAsync()).ReturnsAsync(_conn.Object);
     }
 
     [Fact]
@@ -41,10 +57,12 @@ public class AuthServiceTests
     {
         // Arrange
         SetupDefaultConfig();
+        SetupTransaction();
         var userId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
         var companyId = Guid.NewGuid();
 
-        _loginAttempts.Setup(l => l.CountRecentByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.RecordAsync(It.IsAny<LoginAttempt>())).Returns(Task.CompletedTask);
 
@@ -55,14 +73,15 @@ public class AuthServiceTests
             .ReturnsAsync(new User { Id = userId, CompanyId = companyId, Email = "user@test.com", FullName = "Test User", Status = "active" });
 
         _sessions.Setup(s => s.CountActiveByUserAsync(userId)).ReturnsAsync(0);
-        _sessions.Setup(s => s.CreateAsync(It.IsAny<Session>()))
-            .ReturnsAsync((Session s) => { s.Id = Guid.NewGuid(); return s; });
+        _sessions.Setup(s => s.CreateAsync(It.IsAny<Session>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
+            .ReturnsAsync((Session s, IDbConnection _, IDbTransaction _) => { s.Id = sessionId; return s; });
 
-        _jwt.Setup(j => j.IssueAccessToken(It.IsAny<User>())).Returns("access.token.here");
+        _jwt.Setup(j => j.IssueAccessToken(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).Returns("access.token.here");
         _jwt.Setup(j => j.GenerateRefreshToken()).Returns(("plain-token", "hashed-token"));
-        _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>()))
-            .ReturnsAsync((RefreshToken t) => t);
+        _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
+            .ReturnsAsync((RefreshToken t, IDbConnection _, IDbTransaction _) => t);
 
+        _roles.Setup(r => r.GetPlatformRoleNamesForUserAsync(userId)).ReturnsAsync(new List<string>());
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
         _users.Setup(u => u.UpdateLastSeenAtAsync(userId, It.IsAny<DateTime>())).Returns(Task.CompletedTask);
 
@@ -82,7 +101,7 @@ public class AuthServiceTests
     {
         // Arrange
         SetupDefaultConfig();
-        _loginAttempts.Setup(l => l.CountRecentByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.RecordAsync(It.IsAny<LoginAttempt>())).Returns(Task.CompletedTask);
         _supabaseAuth.Setup(s => s.SignInAsync(It.IsAny<string>(), It.IsAny<string>()))
@@ -101,7 +120,7 @@ public class AuthServiceTests
     {
         // Arrange
         SetupDefaultConfig();
-        _loginAttempts.Setup(l => l.CountRecentByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         // 5 recent failures = locked
         _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(5);
 
@@ -117,8 +136,8 @@ public class AuthServiceTests
     {
         // Arrange
         SetupDefaultConfig();
-        // IP has 5 attempts (equals limit)
-        _loginAttempts.Setup(l => l.CountRecentByIpAsync("1.2.3.4", It.IsAny<DateTime>())).ReturnsAsync(5);
+        // IP has 5 failures (equals limit)
+        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync("1.2.3.4", It.IsAny<DateTime>())).ReturnsAsync(5);
 
         var service = CreateService();
 
@@ -134,7 +153,7 @@ public class AuthServiceTests
         SetupDefaultConfig();
         var userId = Guid.NewGuid();
 
-        _loginAttempts.Setup(l => l.CountRecentByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _supabaseAuth.Setup(s => s.SignInAsync(It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync(new SupabaseAuthResult { UserId = userId });
@@ -161,7 +180,7 @@ public class AuthServiceTests
         var service = CreateService();
 
         // Act
-        await service.LogoutAsync(sessionId, userId, "1.2.3.4");
+        await service.LogoutAsync((Guid?)sessionId, userId, "1.2.3.4");
 
         // Assert
         _sessions.Verify(s => s.EndSessionAsync(sessionId, "logout"), Times.Once);
@@ -172,9 +191,14 @@ public class AuthServiceTests
     public async Task Refresh_ShouldRotateToken_WhenValid()
     {
         // Arrange
-        SetupDefaultConfig();
         var userId = Guid.NewGuid();
         var tokenId = Guid.NewGuid();
+
+        _securityConfig.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<SecurityConfig>
+        {
+            new() { ConfigKey = "jwt_refresh_expiry_days", ConfigValue = "7" },
+            new() { ConfigKey = "jwt_access_expiry_minutes", ConfigValue = "60" }
+        });
 
         _jwt.Setup(j => j.HashToken("valid-token")).Returns("valid-hash");
         _refreshTokens.Setup(r => r.GetByTokenHashAsync("valid-hash"))
@@ -192,7 +216,8 @@ public class AuthServiceTests
         _jwt.Setup(j => j.GenerateRefreshToken()).Returns(("new-plain", "new-hash"));
         _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>()))
             .ReturnsAsync((RefreshToken t) => t);
-        _jwt.Setup(j => j.IssueAccessToken(It.IsAny<User>())).Returns("new-access-token");
+        _roles.Setup(r => r.GetPlatformRoleNamesForUserAsync(userId)).ReturnsAsync(new List<string>());
+        _jwt.Setup(j => j.IssueAccessToken(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).Returns("new-access-token");
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
         var service = CreateService();

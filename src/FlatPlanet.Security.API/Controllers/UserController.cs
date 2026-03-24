@@ -7,7 +7,7 @@ namespace FlatPlanet.Security.API.Controllers;
 
 [ApiController]
 [Route("api/v1/users")]
-[Authorize]
+[Authorize(Policy = "AdminAccess")]
 public class UserController : ControllerBase
 {
     private readonly IUserService _users;
