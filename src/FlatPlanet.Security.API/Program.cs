@@ -77,6 +77,9 @@ builder.Services.AddScoped<IRoleService, RoleService>();
 builder.Services.AddScoped<IPermissionService, PermissionService>();
 builder.Services.AddScoped<IUserAccessService, UserAccessService>();
 builder.Services.AddScoped<IUserService, UserService>();
+builder.Services.AddScoped<IOffboardingService, OffboardingService>();
+builder.Services.AddScoped<IComplianceService, ComplianceService>();
+builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 
 var app = builder.Build();
 
