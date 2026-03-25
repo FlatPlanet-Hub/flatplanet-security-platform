@@ -15,8 +15,17 @@ public class ComplianceController : ControllerBase
     public ComplianceController(IComplianceService compliance) => _compliance = compliance;
 
     [HttpGet("{id:guid}/export")]
+    [Authorize]
     public async Task<IActionResult> Export(Guid id)
     {
+        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
+        if (!Guid.TryParse(sub, out var callerId))
+            throw new UnauthorizedAccessException("Invalid token: user ID claim missing.");
+
+        var isAdmin = User.IsInRole("platform_owner") || User.IsInRole("app_admin");
+        if (callerId != id && !isAdmin)
+            return Forbid();
+
         var result = await _compliance.ExportUserDataAsync(id);
         return Ok(new { success = true, data = result });
     }

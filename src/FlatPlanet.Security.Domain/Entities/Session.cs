@@ -10,6 +10,7 @@ public class Session
     public DateTime StartedAt { get; set; }
     public DateTime LastActiveAt { get; set; }
     public DateTime ExpiresAt { get; set; }
+    public int IdleTimeoutMinutes { get; set; }
     public bool IsActive { get; set; } = true;
     public string? EndedReason { get; set; }
 }

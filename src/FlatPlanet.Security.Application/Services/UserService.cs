@@ -1,4 +1,5 @@
 using FlatPlanet.Security.Application.DTOs.Admin;
+using FlatPlanet.Security.Application.DTOs.Users;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 
@@ -7,20 +8,60 @@ namespace FlatPlanet.Security.Application.Services;
 public class UserService : IUserService
 {
     private readonly IUserRepository _users;
+    private readonly IUserAppRoleRepository _userAppRoles;
 
-    public UserService(IUserRepository users) => _users = users;
+    public UserService(IUserRepository users, IUserAppRoleRepository userAppRoles)
+    {
+        _users = users;
+        _userAppRoles = userAppRoles;
+    }
+
+    public async Task<PagedResult<UserResponse>> GetPagedAsync(UserQueryParams query)
+    {
+        var paged = await _users.GetPagedAsync(query);
+        return new PagedResult<UserResponse>
+        {
+            Items = paged.Items.Select(MapToResponse),
+            TotalCount = paged.TotalCount,
+            Page = paged.Page,
+            PageSize = paged.PageSize
+        };
+    }
 
     public async Task<IEnumerable<UserResponse>> GetAllAsync()
     {
         var users = await _users.GetAllAsync();
-        return users.Select(Map);
+        return users.Select(MapToResponse);
     }
 
-    public async Task<UserResponse> GetByIdAsync(Guid id)
+    public async Task<UserDetailResponse> GetByIdAsync(Guid id)
     {
         var user = await _users.GetByIdAsync(id)
             ?? throw new KeyNotFoundException("User not found.");
-        return Map(user);
+
+        var appRoleDetails = await _userAppRoles.GetDetailsByUserIdAsync(id);
+
+        return new UserDetailResponse
+        {
+            Id = user.Id,
+            CompanyId = user.CompanyId,
+            Email = user.Email,
+            FullName = user.FullName,
+            RoleTitle = user.RoleTitle,
+            Status = user.Status,
+            CreatedAt = user.CreatedAt,
+            LastSeenAt = user.LastSeenAt,
+            AppAccess = appRoleDetails.Select(d => new UserAppAccessDto
+            {
+                AppId = d.AppId,
+                AppName = d.AppName,
+                AppSlug = d.AppSlug,
+                RoleName = d.RoleName,
+                Status = d.Status,
+                GrantedAt = d.GrantedAt,
+                ExpiresAt = d.ExpiresAt
+            })
+        };
     }
 
     public async Task<UserResponse> UpdateAsync(Guid id, UpdateUserRequest request)
@@ -30,7 +71,7 @@ public class UserService : IUserService
         user.FullName = request.FullName;
         user.RoleTitle = request.RoleTitle;
         await _users.UpdateAsync(user);
-        return Map(user);
+        return MapToResponse(user);
     }
 
     public async Task UpdateStatusAsync(Guid id, string status)
@@ -39,7 +80,7 @@ public class UserService : IUserService
         await _users.UpdateStatusAsync(id, status);
     }
 
-    private static UserResponse Map(Domain.Entities.User u) => new()
+    private static UserResponse MapToResponse(Domain.Entities.User u) => new()
     {
         Id = u.Id,
         CompanyId = u.CompanyId,
