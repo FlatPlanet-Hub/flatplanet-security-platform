@@ -41,6 +41,10 @@ public class ExceptionHandlingMiddleware
             KeyNotFoundException => (HttpStatusCode.NotFound, "Resource not found."),
             InvalidOperationException e => (HttpStatusCode.Conflict, e.Message),
             PostgresException { SqlState: "23505" } => (HttpStatusCode.Conflict, "A record with that value already exists."),
+            NpgsqlException e when e.Message.Contains("timeout", StringComparison.OrdinalIgnoreCase)
+                => ((HttpStatusCode)503, "Database is temporarily unavailable. Please retry."),
+            OperationCanceledException
+                => ((HttpStatusCode)503, "Request timed out. Please retry."),
             _ => (HttpStatusCode.InternalServerError, "An unexpected error occurred.")
         };
 
