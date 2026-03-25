@@ -55,10 +55,10 @@ public class AuthController : ControllerBase
 
     [Authorize]
     [HttpGet("me")]
-    public async Task<IActionResult> Me()
+    public async Task<IActionResult> Me([FromQuery] string? appSlug)
     {
         var userId = GetUserId();
-        var profile = await _authService.GetProfileAsync(userId);
+        var profile = await _authService.GetProfileAsync(userId, appSlug);
         return Ok(new { success = true, data = profile });
     }
 

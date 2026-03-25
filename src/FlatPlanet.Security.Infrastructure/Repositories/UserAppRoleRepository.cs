@@ -1,4 +1,6 @@
 using Dapper;
+using FlatPlanet.Security.Application.DTOs.Access;
+using FlatPlanet.Security.Application.DTOs.Users;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Domain.Entities;
@@ -86,5 +88,87 @@ public class UserAppRoleRepository : IUserAppRoleRepository
             "SELECT COUNT(*) FROM user_app_roles WHERE role_id = @RoleId AND status = 'active'",
             new { RoleId = roleId });
         return count > 0;
+    }
+
+    public async Task<IEnumerable<UserAppRoleDetail>> GetDetailsByUserIdAsync(Guid userId)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        return await conn.QueryAsync<UserAppRoleDetail>(
+            """
+            SELECT uar.id, uar.user_id, uar.app_id,
+                   a.name AS app_name, a.slug AS app_slug,
+                   r.name AS role_name,
+                   uar.status, uar.granted_at, uar.expires_at
+            FROM user_app_roles uar
+            JOIN apps a ON a.id = uar.app_id
+            JOIN roles r ON r.id = uar.role_id
+            WHERE uar.user_id = @UserId
+              AND uar.status = 'active'
+              AND (uar.expires_at IS NULL OR uar.expires_at > now())
+            ORDER BY a.name
+            """,
+            new { UserId = userId });
+    }
+
+    public async Task<PagedResult<AccessReviewItemDto>> GetAccessReviewAsync(
+        int page, int pageSize, Guid? companyId, Guid? appId)
+    {
+        var where = new List<string>
+        {
+            "uar.status = 'active'",
+            "(uar.expires_at IS NULL OR uar.expires_at > now())"
+        };
+        var parameters = new DynamicParameters();
+        var safePageSize = Math.Clamp(pageSize, 1, 100);
+        var safeOffset = (Math.Max(page, 1) - 1) * safePageSize;
+        parameters.Add("PageSize", safePageSize);
+        parameters.Add("Offset", safeOffset);
+
+        if (companyId.HasValue)
+        {
+            where.Add("u.company_id = @CompanyId");
+            parameters.Add("CompanyId", companyId.Value);
+        }
+        if (appId.HasValue)
+        {
+            where.Add("uar.app_id = @AppId");
+            parameters.Add("AppId", appId.Value);
+        }
+
+        var whereClause = "WHERE " + string.Join(" AND ", where);
+
+        var sql = $"""
+            SELECT uar.id AS grant_id, uar.user_id, u.email AS user_email,
+                   c.name AS company_name, uar.app_id, a.name AS app_name,
+                   r.name AS role_name, uar.granted_at,uar.expires_at,
+                   EXTRACT(DAY FROM now() - uar.granted_at)::int AS days_since_granted
+            FROM user_app_roles uar
+            JOIN users u ON u.id = uar.user_id
+            JOIN companies c ON c.id = u.company_id
+            JOIN apps a ON a.id = uar.app_id
+            JOIN roles r ON r.id = uar.role_id
+            {whereClause}
+            ORDER BY uar.granted_at ASC
+            LIMIT @PageSize OFFSET @Offset
+            """;
+
+        var countSql = $"""
+            SELECT COUNT(*)
+            FROM user_app_roles uar
+            JOIN users u ON u.id = uar.user_id
+            {whereClause}
+            """;
+
+        using var conn = await _db.CreateConnectionAsync();
+        var items = await conn.QueryAsync<AccessReviewItemDto>(sql, parameters);
+        var total = await conn.QuerySingleAsync<int>(countSql, parameters);
+
+        return new PagedResult<AccessReviewItemDto>
+        {
+            Items = items,
+            TotalCount = total,
+            Page = Math.Max(page, 1),
+            PageSize = safePageSize
+        };
     }
 }

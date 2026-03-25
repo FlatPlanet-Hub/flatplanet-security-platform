@@ -20,8 +20,8 @@ public class SessionRepository : ISessionRepository
         using var conn = await _db.CreateConnectionAsync();
         var id = await conn.QuerySingleAsync<Guid>(
             """
-            INSERT INTO sessions (user_id, app_id, ip_address, user_agent, expires_at)
-            VALUES (@UserId, @AppId, @IpAddress, @UserAgent, @ExpiresAt)
+            INSERT INTO sessions (user_id, app_id, ip_address, user_agent, expires_at, idle_timeout_minutes)
+            VALUES (@UserId, @AppId, @IpAddress, @UserAgent, @ExpiresAt, @IdleTimeoutMinutes)
             RETURNING id
             """,
             session);
@@ -33,8 +33,8 @@ public class SessionRepository : ISessionRepository
     {
         var id = await conn.QuerySingleAsync<Guid>(
             """
-            INSERT INTO sessions (user_id, app_id, ip_address, user_agent, expires_at)
-            VALUES (@UserId, @AppId, @IpAddress, @UserAgent, @ExpiresAt)
+            INSERT INTO sessions (user_id, app_id, ip_address, user_agent, expires_at, idle_timeout_minutes)
+            VALUES (@UserId, @AppId, @IpAddress, @UserAgent, @ExpiresAt, @IdleTimeoutMinutes)
             RETURNING id
             """,
             session, transaction: tx);

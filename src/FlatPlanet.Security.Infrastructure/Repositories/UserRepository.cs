@@ -1,4 +1,5 @@
 using Dapper;
+using FlatPlanet.Security.Application.DTOs.Users;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Domain.Entities;
@@ -44,6 +45,48 @@ public class UserRepository : IUserRepository
             new { CompanyId = companyId });
     }
 
+    public async Task<PagedResult<User>> GetPagedAsync(UserQueryParams query)
+    {
+        var where = new List<string>();
+        var parameters = new DynamicParameters();
+        parameters.Add("PageSize", Math.Clamp(query.PageSize, 1, 100));
+        parameters.Add("Offset", (Math.Max(query.Page, 1) - 1) * Math.Clamp(query.PageSize, 1, 100));
+
+        if (query.CompanyId.HasValue)
+        {
+            where.Add("company_id = @CompanyId");
+            parameters.Add("CompanyId", query.CompanyId.Value);
+        }
+        if (!string.IsNullOrEmpty(query.Status))
+        {
+            where.Add("status = @Status");
+            parameters.Add("Status", query.Status);
+        }
+        if (!string.IsNullOrEmpty(query.Search))
+        {
+            where.Add("(email ILIKE @Search OR full_name ILIKE @Search)");
+            parameters.Add("Search", $"%{query.Search}%");
+        }
+
+        var whereClause = where.Count > 0 ? "WHERE " + string.Join(" AND ", where) : "";
+
+        using var conn = await _db.CreateConnectionAsync();
+        var items = await conn.QueryAsync<User>(
+            $"SELECT * FROM users {whereClause} ORDER BY full_name LIMIT @PageSize OFFSET @Offset",
+            parameters);
+        var total = await conn.QuerySingleAsync<int>(
+            $"SELECT COUNT(*) FROM users {whereClause}",
+            parameters);
+
+        return new PagedResult<User>
+        {
+            Items = items,
+            TotalCount = total,
+            Page = Math.Max(query.Page, 1),
+            PageSize = Math.Clamp(query.PageSize, 1, 100)
+        };
+    }
+
     public async Task UpdateAsync(User user)
     {
         using var conn = await _db.CreateConnectionAsync();
@@ -66,5 +109,13 @@ public class UserRepository : IUserRepository
         await conn.ExecuteAsync(
             "UPDATE users SET status = @Status WHERE id = @Id",
             new { Status = status, Id = userId });
+    }
+
+    public async Task SuspendByCompanyIdAsync(Guid companyId)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET status = 'suspended' WHERE company_id = @CompanyId AND status = 'active'",
+            new { CompanyId = companyId });
     }
 }
