@@ -1,7 +1,9 @@
+using System.Text.Json;
 using FlatPlanet.Security.Application.DTOs.Admin;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Domain.Entities;
+using FlatPlanet.Security.Domain.Enums;
 
 namespace FlatPlanet.Security.Application.Services;
 
@@ -10,17 +12,20 @@ public class CompanyService : ICompanyService
     private readonly ICompanyRepository _companies;
     private readonly IUserRepository _users;
     private readonly IUserAppRoleRepository _userAppRoles;
+    private readonly IRefreshTokenRepository _refreshTokens;
     private readonly IAuditLogRepository _auditLog;
 
     public CompanyService(
         ICompanyRepository companies,
         IUserRepository users,
         IUserAppRoleRepository userAppRoles,
+        IRefreshTokenRepository refreshTokens,
         IAuditLogRepository auditLog)
     {
         _companies = companies;
         _users = users;
         _userAppRoles = userAppRoles;
+        _refreshTokens = refreshTokens;
         _auditLog = auditLog;
     }
 
@@ -61,13 +66,24 @@ public class CompanyService : ICompanyService
 
     public async Task UpdateStatusAsync(Guid id, string status)
     {
-        var company = await _companies.GetByIdAsync(id)
+        _ = await _companies.GetByIdAsync(id)
             ?? throw new KeyNotFoundException("Company not found.");
 
         await _companies.UpdateStatusAsync(id, status);
 
-        // Cascade: suspend all users in this company if company is suspended/inactive
-        if (status is "suspended" or "inactive")
+        if (status == "suspended")
+        {
+            await _users.SuspendByCompanyIdAsync(id);
+            await _refreshTokens.RevokeAllByCompanyIdAsync(id, "company_suspended");
+
+            await _auditLog.LogAsync(new AuthAuditLog
+            {
+                UserId = null,
+                EventType = AuditEventType.CompanySuspended,
+                Details = JsonSerializer.Serialize(new { company_id = id, status })
+            });
+        }
+        else if (status == "inactive")
         {
             var users = await _users.GetByCompanyIdAsync(id);
             foreach (var user in users)
@@ -75,14 +91,14 @@ public class CompanyService : ICompanyService
                 await _userAppRoles.SuspendAllByUserAsync(user.Id);
                 await _users.UpdateStatusAsync(user.Id, status);
             }
-        }
 
-        await _auditLog.LogAsync(new AuthAuditLog
-        {
-            UserId = id,
-            EventType = "company_status_updated",
-            Details = $"{{\"status\":\"{status}\"}}"
-        });
+            await _auditLog.LogAsync(new AuthAuditLog
+            {
+                UserId = null,
+                EventType = AuditEventType.CompanySuspended,
+                Details = JsonSerializer.Serialize(new { company_id = id, status })
+            });
+        }
     }
 
     private static CompanyResponse Map(Company c) => new()

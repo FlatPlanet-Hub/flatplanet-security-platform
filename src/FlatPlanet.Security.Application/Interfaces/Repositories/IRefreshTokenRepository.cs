@@ -10,4 +10,5 @@ public interface IRefreshTokenRepository
     Task<RefreshToken?> GetByTokenHashAsync(string tokenHash);
     Task RevokeAsync(Guid tokenId, string reason);
     Task RevokeAllByUserAsync(Guid userId, string reason);
+    Task RevokeAllByCompanyIdAsync(Guid companyId, string reason);
 }

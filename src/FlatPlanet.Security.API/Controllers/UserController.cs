@@ -1,4 +1,5 @@
 using FlatPlanet.Security.Application.DTOs.Admin;
+using FlatPlanet.Security.Application.DTOs.Users;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,9 +16,9 @@ public class UserController : ControllerBase
     public UserController(IUserService users) => _users = users;
 
     [HttpGet]
-    public async Task<IActionResult> GetAll()
+    public async Task<IActionResult> GetAll([FromQuery] UserQueryParams query)
     {
-        var result = await _users.GetAllAsync();
+        var result = await _users.GetPagedAsync(query);
         return Ok(new { success = true, data = result });
     }
 
