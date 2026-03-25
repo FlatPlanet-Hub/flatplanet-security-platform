@@ -11,5 +11,5 @@ public class DatabaseOptions
     public string Password { get; set; } = string.Empty;
 
     public string BuildConnectionString() =>
-        $"Host={Host};Port={Port};Database={Name};Username={User};Password={Password};SslMode=Require;Trust Server Certificate=true";
+        $"Host={Host};Port={Port};Database={Name};Username={User};Password={Password};SslMode=Require;Trust Server Certificate=true;No Reset On Close=true;Max Auto Prepare=0;Command Timeout=30";
 }
