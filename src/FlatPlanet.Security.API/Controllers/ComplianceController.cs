@@ -7,7 +7,7 @@ namespace FlatPlanet.Security.API.Controllers;
 
 [ApiController]
 [Route("api/v1/users")]
-[Authorize(Policy = "AdminAccess")]
+[Authorize]
 public class ComplianceController : ControllerBase
 {
     private readonly IComplianceService _compliance;
@@ -15,7 +15,6 @@ public class ComplianceController : ControllerBase
     public ComplianceController(IComplianceService compliance) => _compliance = compliance;
 
     [HttpGet("{id:guid}/export")]
-    [Authorize]
     public async Task<IActionResult> Export(Guid id)
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
@@ -31,6 +30,7 @@ public class ComplianceController : ControllerBase
     }
 
     [HttpPost("{id:guid}/anonymize")]
+    [Authorize(Policy = "AdminAccess")]
     public async Task<IActionResult> Anonymize(Guid id)
     {
         var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
