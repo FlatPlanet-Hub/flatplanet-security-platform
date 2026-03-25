@@ -12,7 +12,7 @@ namespace FlatPlanet.Security.Tests;
 
 public class AuthServiceTests
 {
-    private readonly Mock<ISupabaseAuthClient> _supabaseAuth = new();
+    private readonly Mock<IPasswordHasher> _passwordHasher = new();
     private readonly Mock<IJwtService> _jwt = new();
     private readonly Mock<IUserRepository> _users = new();
     private readonly Mock<ISessionRepository> _sessions = new();
@@ -28,7 +28,7 @@ public class AuthServiceTests
     private readonly Mock<IUserContextService> _userContext = new();
 
     private AuthService CreateService() => new(
-        _supabaseAuth.Object, _jwt.Object, _users.Object,
+        _passwordHasher.Object, _jwt.Object, _users.Object,
         _sessions.Object, _refreshTokens.Object,
         _loginAttempts.Object, _auditLog.Object, _securityConfig.Object,
         _roles.Object, _db.Object, _companies.Object, _userContext.Object);
@@ -71,11 +71,9 @@ public class AuthServiceTests
         _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.RecordAsync(It.IsAny<LoginAttempt>())).Returns(Task.CompletedTask);
 
-        _supabaseAuth.Setup(s => s.SignInAsync("user@test.com", "pass123"))
-            .ReturnsAsync(new SupabaseAuthResult { UserId = userId, Email = "user@test.com" });
-
-        _users.Setup(u => u.GetByIdAsync(userId))
-            .ReturnsAsync(new User { Id = userId, CompanyId = companyId, Email = "user@test.com", FullName = "Test User", Status = "active" });
+        var user = new User { Id = userId, CompanyId = companyId, Email = "user@test.com", FullName = "Test User", Status = "active", PasswordHash = "hashed" };
+        _users.Setup(u => u.GetByEmailAsync("user@test.com")).ReturnsAsync(user);
+        _passwordHasher.Setup(p => p.Verify("pass123", "hashed")).Returns(true);
 
         _companies.Setup(c => c.GetByIdAsync(companyId))
             .ReturnsAsync(new Company { Id = companyId, Name = "Test Co", Status = "active" });
@@ -105,7 +103,7 @@ public class AuthServiceTests
     }
 
     [Fact]
-    public async Task Login_ShouldReturn401_WhenSupabaseAuthFails()
+    public async Task Login_ShouldReturn401_WhenPasswordInvalid()
     {
         // Arrange
         SetupDefaultConfig();
@@ -113,8 +111,9 @@ public class AuthServiceTests
         _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.RecordAsync(It.IsAny<LoginAttempt>())).Returns(Task.CompletedTask);
-        _supabaseAuth.Setup(s => s.SignInAsync(It.IsAny<string>(), It.IsAny<string>()))
-            .ReturnsAsync((SupabaseAuthResult?)null);
+        _users.Setup(u => u.GetByEmailAsync(It.IsAny<string>()))
+            .ReturnsAsync(new User { Id = Guid.NewGuid(), Email = "bad@test.com", PasswordHash = "hashed", Status = "active" });
+        _passwordHasher.Setup(p => p.Verify(It.IsAny<string>(), It.IsAny<string>())).Returns(false);
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
         var service = CreateService();
@@ -122,6 +121,25 @@ public class AuthServiceTests
         // Act & Assert
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             service.LoginAsync(new LoginRequest { Email = "bad@test.com", Password = "wrong" }, null, null));
+    }
+
+    [Fact]
+    public async Task Login_ShouldReturn401_WhenUserNotFound()
+    {
+        // Arrange
+        SetupDefaultConfig();
+        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.RecordAsync(It.IsAny<LoginAttempt>())).Returns(Task.CompletedTask);
+        _users.Setup(u => u.GetByEmailAsync(It.IsAny<string>())).ReturnsAsync((User?)null);
+        _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
+
+        var service = CreateService();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            service.LoginAsync(new LoginRequest { Email = "nobody@test.com", Password = "pass" }, null, null));
     }
 
     [Fact]
@@ -177,15 +195,12 @@ public class AuthServiceTests
     {
         // Arrange
         SetupDefaultConfig();
-        var userId = Guid.NewGuid();
-
         _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _supabaseAuth.Setup(s => s.SignInAsync(It.IsAny<string>(), It.IsAny<string>()))
-            .ReturnsAsync(new SupabaseAuthResult { UserId = userId });
-        _users.Setup(u => u.GetByIdAsync(userId))
-            .ReturnsAsync(new User { Id = userId, Status = "inactive" });
+        _users.Setup(u => u.GetByEmailAsync(It.IsAny<string>()))
+            .ReturnsAsync(new User { Id = Guid.NewGuid(), Email = "user@test.com", PasswordHash = "hashed", Status = "inactive" });
+        _passwordHasher.Setup(p => p.Verify(It.IsAny<string>(), It.IsAny<string>())).Returns(true);
 
         var service = CreateService();
 
@@ -205,10 +220,9 @@ public class AuthServiceTests
         _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _supabaseAuth.Setup(s => s.SignInAsync(It.IsAny<string>(), It.IsAny<string>()))
-            .ReturnsAsync(new SupabaseAuthResult { UserId = userId });
-        _users.Setup(u => u.GetByIdAsync(userId))
-            .ReturnsAsync(new User { Id = userId, CompanyId = companyId, Status = "active" });
+        _users.Setup(u => u.GetByEmailAsync(It.IsAny<string>()))
+            .ReturnsAsync(new User { Id = userId, CompanyId = companyId, Email = "user@test.com", PasswordHash = "hashed", Status = "active" });
+        _passwordHasher.Setup(p => p.Verify(It.IsAny<string>(), It.IsAny<string>())).Returns(true);
         _companies.Setup(c => c.GetByIdAsync(companyId))
             .ReturnsAsync(new Company { Id = companyId, Name = "Acme", Status = "suspended" });
 

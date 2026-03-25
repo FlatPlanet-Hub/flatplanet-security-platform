@@ -14,4 +14,5 @@ public interface IUserRepository
     Task UpdateLastSeenAtAsync(Guid userId, DateTime lastSeenAt);
     Task UpdateStatusAsync(Guid userId, string status);
     Task SuspendByCompanyIdAsync(Guid companyId);
+    Task<User> CreateAsync(User user);
 }

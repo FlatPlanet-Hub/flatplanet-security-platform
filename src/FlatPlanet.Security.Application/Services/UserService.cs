@@ -9,11 +9,28 @@ public class UserService : IUserService
 {
     private readonly IUserRepository _users;
     private readonly IUserAppRoleRepository _userAppRoles;
+    private readonly IPasswordHasher _passwordHasher;
 
-    public UserService(IUserRepository users, IUserAppRoleRepository userAppRoles)
+    public UserService(IUserRepository users, IUserAppRoleRepository userAppRoles, IPasswordHasher passwordHasher)
     {
         _users = users;
         _userAppRoles = userAppRoles;
+        _passwordHasher = passwordHasher;
+    }
+
+    public async Task<UserResponse> CreateAsync(CreateUserRequest request)
+    {
+        var user = new Domain.Entities.User
+        {
+            CompanyId = request.CompanyId,
+            Email = request.Email,
+            FullName = request.FullName,
+            RoleTitle = request.RoleTitle,
+            PasswordHash = _passwordHasher.Hash(request.Password),
+            Status = "active"
+        };
+        var created = await _users.CreateAsync(user);
+        return MapToResponse(created);
     }
 
     public async Task<PagedResult<UserResponse>> GetPagedAsync(UserQueryParams query)

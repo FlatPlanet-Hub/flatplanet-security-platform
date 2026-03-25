@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using FlatPlanet.Security.Application.Common.Exceptions;
+using Npgsql;
 
 namespace FlatPlanet.Security.API.Middleware;
 
@@ -39,6 +40,7 @@ public class ExceptionHandlingMiddleware
             ArgumentException e => (HttpStatusCode.BadRequest, e.Message),
             KeyNotFoundException => (HttpStatusCode.NotFound, "Resource not found."),
             InvalidOperationException e => (HttpStatusCode.Conflict, e.Message),
+            PostgresException { SqlState: "23505" } => (HttpStatusCode.Conflict, "A record with that value already exists."),
             _ => (HttpStatusCode.InternalServerError, "An unexpected error occurred.")
         };
 
