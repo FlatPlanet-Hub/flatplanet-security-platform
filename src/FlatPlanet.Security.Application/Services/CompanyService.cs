@@ -78,7 +78,7 @@ public class CompanyService : ICompanyService
 
             await _auditLog.LogAsync(new AuthAuditLog
             {
-                UserId = id,
+                UserId = null,
                 EventType = AuditEventType.CompanySuspended,
                 Details = JsonSerializer.Serialize(new { company_id = id, status })
             });
@@ -94,7 +94,7 @@ public class CompanyService : ICompanyService
 
             await _auditLog.LogAsync(new AuthAuditLog
             {
-                UserId = id,
+                UserId = null,
                 EventType = AuditEventType.CompanySuspended,
                 Details = JsonSerializer.Serialize(new { company_id = id, status })
             });
