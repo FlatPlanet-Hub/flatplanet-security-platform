@@ -20,3 +20,14 @@ Agents/
 # OS
 .DS_Store
 Thumbs.db
+
+# Node
+node_modules/
+package-lock.json
+package.json
+
+# Azure publish profiles (contain deployment credentials)
+**/PublishProfiles/
+
+# Claude Code working files
+.claude/
