@@ -22,6 +22,17 @@ public class LoginAttemptRepository : ILoginAttemptRepository
             attempt);
     }
 
+    public async Task<int> CountRecentByEmailAsync(string email, DateTime since)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        return await conn.QuerySingleAsync<int>(
+            """
+            SELECT COUNT(*) FROM login_attempts
+            WHERE email = @Email AND attempted_at >= @Since
+            """,
+            new { Email = email, Since = since });
+    }
+
     public async Task<int> CountRecentFailuresByEmailAsync(string email, DateTime since)
     {
         using var conn = await _db.CreateConnectionAsync();

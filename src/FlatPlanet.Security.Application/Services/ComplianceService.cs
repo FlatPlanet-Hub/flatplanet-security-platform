@@ -16,6 +16,7 @@ public class ComplianceService : IComplianceService
     private readonly IRoleRepository _roles;
     private readonly IAppRepository _apps;
     private readonly ISessionRepository _sessions;
+    private readonly IRefreshTokenRepository _refreshTokens;
     private readonly IAuditLogRepository _auditLog;
 
     public ComplianceService(
@@ -24,6 +25,7 @@ public class ComplianceService : IComplianceService
         IRoleRepository roles,
         IAppRepository apps,
         ISessionRepository sessions,
+        IRefreshTokenRepository refreshTokens,
         IAuditLogRepository auditLog)
     {
         _users = users;
@@ -31,6 +33,7 @@ public class ComplianceService : IComplianceService
         _roles = roles;
         _apps = apps;
         _sessions = sessions;
+        _refreshTokens = refreshTokens;
         _auditLog = auditLog;
     }
 
@@ -39,7 +42,6 @@ public class ComplianceService : IComplianceService
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
 
-        // App roles
         var userRoles = (await _userAppRoles.GetActiveByUserAsync(userId)).ToList();
         var appRoles = new List<UserAccessResponse>();
         foreach (var ur in userRoles)
@@ -60,7 +62,6 @@ public class ComplianceService : IComplianceService
             });
         }
 
-        // Sessions
         var sessions = (await _sessions.GetAllByUserIdAsync(userId))
             .Select(s => new SessionDto
             {
@@ -72,7 +73,6 @@ public class ComplianceService : IComplianceService
                 LastActiveAt = s.LastActiveAt
             });
 
-        // Audit events
         var auditEvents = (await _auditLog.GetByUserIdAsync(userId))
             .Select(a => new AuditLogResponse
             {
@@ -110,11 +110,14 @@ public class ComplianceService : IComplianceService
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
 
-        // Replace PII with anonymized values — preserve audit trail
         user.Email = $"anonymized_{userId:N}@deleted.invalid";
         user.FullName = "Anonymized User";
         user.RoleTitle = null;
         await _users.UpdateAsync(user);
+
+        await _users.UpdateStatusAsync(userId, "inactive");
+        await _sessions.EndAllActiveSessionsByUserAsync(userId, "anonymized");
+        await _refreshTokens.RevokeAllByUserAsync(userId, "anonymized");
 
         await _auditLog.LogAsync(new AuthAuditLog
         {

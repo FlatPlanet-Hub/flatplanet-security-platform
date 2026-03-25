@@ -1,17 +1,36 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace FlatPlanet.Security.Application.DTOs.Admin;
 
 public class CreateAppRequest
 {
+    [Required]
     public Guid CompanyId { get; set; }
+
+    [Required]
+    [MaxLength(200)]
     public string Name { get; set; } = string.Empty;
+
+    [Required]
+    [MaxLength(100)]
+    [RegularExpression("^[a-z0-9-]+$", ErrorMessage = "Slug must contain only lowercase letters, digits, and hyphens.")]
     public string Slug { get; set; } = string.Empty;
+
+    [MaxLength(500)]
     public string BaseUrl { get; set; } = string.Empty;
 }
 
 public class UpdateAppRequest
 {
+    [Required]
+    [MaxLength(200)]
     public string Name { get; set; } = string.Empty;
+
+    [MaxLength(500)]
     public string BaseUrl { get; set; } = string.Empty;
+
+    [Required]
+    [RegularExpression("^(active|suspended|inactive)$")]
     public string Status { get; set; } = string.Empty;
 }
 

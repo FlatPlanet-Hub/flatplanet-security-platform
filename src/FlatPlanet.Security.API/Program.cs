@@ -10,6 +10,7 @@ using FlatPlanet.Security.Infrastructure.Persistence;
 using FlatPlanet.Security.Infrastructure.Repositories;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +24,19 @@ builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptio
 // Database
 builder.Services.AddSingleton<IDbConnectionFactory>(
     new NpgsqlConnectionFactory(supabaseOptions.BuildConnectionString()));
+
+// CORS
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyHeader()
+              .AllowAnyMethod()
+              .AllowCredentials();
+    });
+});
 
 // Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -46,6 +60,10 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("PlatformOwner", policy => policy.RequireRole("platform_owner"));
     options.AddPolicy("AdminAccess", policy => policy.RequireRole("platform_owner", "app_admin"));
 });
+
+// OpenAPI
+builder.Services.AddOpenApi();
+
 builder.Services.AddControllers();
 builder.Services.AddHealthChecks();
 
@@ -84,14 +102,29 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IOffboardingService, OffboardingService>();
 builder.Services.AddScoped<IComplianceService, ComplianceService>();
 builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
+builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
 
 var app = builder.Build();
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseHttpsRedirection();
+app.UseCors();
 app.UseAuthentication();
+app.UseMiddleware<SessionValidationMiddleware>();
 app.UseAuthorization();
+
+// OpenAPI spec endpoint + Scalar UI (dev-only is intentionally not enforced —
+// restrict via network/infra in production instead of compile-time env checks)
+app.MapOpenApi();
+app.MapScalarApiReference(options =>
+{
+    options.Title = "FlatPlanet Security Platform API";
+    options.Theme = ScalarTheme.DeepSpace;
+    options.DefaultHttpClient = new(ScalarTarget.JavaScript, ScalarClient.Fetch);
+    options.AddPreferredSecuritySchemes("Bearer")
+           .AddHttpAuthentication("Bearer", bearer => { bearer.Token = string.Empty; });
+});
 
 app.MapControllers();
 app.MapHealthChecks("/health");
