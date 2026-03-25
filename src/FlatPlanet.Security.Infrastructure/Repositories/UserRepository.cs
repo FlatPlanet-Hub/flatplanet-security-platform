@@ -118,4 +118,15 @@ public class UserRepository : IUserRepository
             "UPDATE users SET status = 'suspended' WHERE company_id = @CompanyId AND status = 'active'",
             new { CompanyId = companyId });
     }
+
+    public async Task<User> CreateAsync(User user)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        var id = await conn.QuerySingleAsync<Guid>(
+            "INSERT INTO users (company_id, email, full_name, role_title, password_hash, status) " +
+            "VALUES (@CompanyId, @Email, @FullName, @RoleTitle, @PasswordHash, @Status) RETURNING id",
+            user);
+        user.Id = id;
+        return user;
+    }
 }
