@@ -19,7 +19,7 @@ public class UserController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CreateUserRequest request)
     {
         var result = await _users.CreateAsync(request);
-        return Ok(new { success = true, data = result });
+        return StatusCode(201, new { success = true, data = result });
     }
 
     [HttpGet]
