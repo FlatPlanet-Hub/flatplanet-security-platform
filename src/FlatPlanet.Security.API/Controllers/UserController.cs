@@ -15,6 +15,13 @@ public class UserController : ControllerBase
 
     public UserController(IUserService users) => _users = users;
 
+    [HttpPost]
+    public async Task<IActionResult> Create([FromBody] CreateUserRequest request)
+    {
+        var result = await _users.CreateAsync(request);
+        return Ok(new { success = true, data = result });
+    }
+
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] UserQueryParams query)
     {
