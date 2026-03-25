@@ -21,7 +21,7 @@ public class SecurityHeadersMiddleware
         var path = context.Request.Path.Value ?? string.Empty;
         if (path.StartsWith("/scalar") || path.StartsWith("/openapi"))
             context.Response.Headers["Content-Security-Policy"] =
-                "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; worker-src blob:;";
+                "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' https://fonts.scalar.com; worker-src blob:;";
         else
             context.Response.Headers["Content-Security-Policy"] = "default-src 'self'";
 
