@@ -12,6 +12,11 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 
+// Enable Dapper snake_case → PascalCase column mapping globally
+// Without this, columns like config_key, full_name, company_id are not mapped
+// to ConfigKey, FullName, CompanyId — leaving all properties at default values.
+Dapper.DefaultTypeMap.MatchNamesWithUnderscores = true;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Options
