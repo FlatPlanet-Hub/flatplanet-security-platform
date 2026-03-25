@@ -1,16 +1,33 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace FlatPlanet.Security.Application.DTOs.Admin;
 
 public class CreateResourceRequest
 {
+    [Required]
     public Guid ResourceTypeId { get; set; }
+
+    [Required]
+    [MaxLength(200)]
     public string Name { get; set; } = string.Empty;
+
+    [Required]
+    [MaxLength(200)]
     public string Identifier { get; set; } = string.Empty;
 }
 
 public class UpdateResourceRequest
 {
+    [Required]
+    [MaxLength(200)]
     public string Name { get; set; } = string.Empty;
+
+    [Required]
+    [MaxLength(200)]
     public string Identifier { get; set; } = string.Empty;
+
+    [Required]
+    [RegularExpression("^(active|inactive)$")]
     public string Status { get; set; } = string.Empty;
 }
 

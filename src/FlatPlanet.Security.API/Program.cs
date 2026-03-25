@@ -102,6 +102,7 @@ builder.Services.AddScoped<IUserService, UserService>();
 builder.Services.AddScoped<IOffboardingService, OffboardingService>();
 builder.Services.AddScoped<IComplianceService, ComplianceService>();
 builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
+builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
 
 var app = builder.Build();
 
@@ -110,6 +111,7 @@ app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseHttpsRedirection();
 app.UseCors();
 app.UseAuthentication();
+app.UseMiddleware<SessionValidationMiddleware>();
 app.UseAuthorization();
 
 // OpenAPI spec endpoint + Scalar UI (dev-only is intentionally not enforced —

@@ -1,13 +1,21 @@
+using System.ComponentModel.DataAnnotations;
+
 namespace FlatPlanet.Security.Application.DTOs.Admin;
 
 public class UpdateUserRequest
 {
+    [Required]
+    [MaxLength(200)]
     public string FullName { get; set; } = string.Empty;
+
+    [MaxLength(200)]
     public string? RoleTitle { get; set; }
 }
 
 public class UpdateUserStatusRequest
 {
+    [Required]
+    [RegularExpression("^(active|suspended|inactive)$")]
     public string Status { get; set; } = string.Empty;
 }
 

@@ -73,4 +73,17 @@ public class RefreshTokenRepository : IRefreshTokenRepository
             """,
             new { Reason = reason, UserId = userId });
     }
+
+    public async Task RevokeAllByCompanyIdAsync(Guid companyId, string reason)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            """
+            UPDATE refresh_tokens
+            SET revoked = true, revoked_at = now(), revoked_reason = @Reason
+            WHERE user_id IN (SELECT id FROM users WHERE company_id = @CompanyId)
+              AND revoked = false
+            """,
+            new { Reason = reason, CompanyId = companyId });
+    }
 }

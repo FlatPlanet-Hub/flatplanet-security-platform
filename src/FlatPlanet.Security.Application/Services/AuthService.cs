@@ -21,6 +21,8 @@ public class AuthService : IAuthService
     private readonly ISecurityConfigRepository _securityConfig;
     private readonly IRoleRepository _roles;
     private readonly IDbConnectionFactory _db;
+    private readonly ICompanyRepository _companies;
+    private readonly IUserContextService _userContext;
 
     public AuthService(
         ISupabaseAuthClient supabaseAuth,
@@ -32,7 +34,9 @@ public class AuthService : IAuthService
         IAuditLogRepository auditLog,
         ISecurityConfigRepository securityConfig,
         IRoleRepository roles,
-        IDbConnectionFactory db)
+        IDbConnectionFactory db,
+        ICompanyRepository companies,
+        IUserContextService userContext)
     {
         _supabaseAuth = supabaseAuth;
         _jwt = jwt;
@@ -44,19 +48,20 @@ public class AuthService : IAuthService
         _securityConfig = securityConfig;
         _roles = roles;
         _db = db;
+        _companies = companies;
+        _userContext = userContext;
     }
 
     public async Task<LoginResponse> LoginAsync(LoginRequest request, string? ipAddress, string? userAgent)
     {
         var now = DateTime.UtcNow;
 
-        // Fix 7: load all config in one call
         var allConfig = (await _securityConfig.GetAllAsync())
             .ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
         int Cfg(string key, int def) =>
             allConfig.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
-        // 1. Rate limit check (Fix 11: count only failures from this IP)
+        // 1. Per-IP rate limit
         if (!string.IsNullOrEmpty(ipAddress))
         {
             var rateLimitPerIp = Cfg("rate_limit_login_per_ip_per_minute", 5);
@@ -65,16 +70,21 @@ public class AuthService : IAuthService
                 throw new TooManyRequestsException("Too many login attempts from this IP.");
         }
 
-        // 2. Account lockout check
+        // 2. Per-email rate limit (all attempts, not just failures)
+        var rateLimitPerEmail = Cfg("rate_limit_login_per_email_per_minute", 10);
+        var emailAttempts = await _loginAttempts.CountRecentByEmailAsync(request.Email, now.AddMinutes(-1));
+        if (emailAttempts >= rateLimitPerEmail)
+            throw new TooManyRequestsException("Too many login attempts for this account.");
+
+        // 3. Account lockout check (failures in lockout window)
         var maxFailures = Cfg("max_failed_login_attempts", 5);
         var lockoutMinutes = Cfg("lockout_duration_minutes", 30);
         var recentFailures = await _loginAttempts.CountRecentFailuresByEmailAsync(
             request.Email, now.AddMinutes(-lockoutMinutes));
-
         if (recentFailures >= maxFailures)
             throw new AccountLockedException("Account is temporarily locked. Please try again later.");
 
-        // 3. Verify with Supabase Auth (Fix 12: throws on infra errors)
+        // 4. Verify with Supabase Auth
         var authResult = await _supabaseAuth.SignInAsync(request.Email, request.Password);
 
         if (authResult is null)
@@ -86,7 +96,6 @@ public class AuthService : IAuthService
                 Success = false,
                 AttemptedAt = now
             });
-            // Fix 4: use JsonSerializer — no injection risk
             await _auditLog.LogAsync(new AuthAuditLog
             {
                 UserId = null,
@@ -98,15 +107,21 @@ public class AuthService : IAuthService
             throw new UnauthorizedAccessException("Invalid email or password.");
         }
 
-        // 4. Lookup user
+        // 5. Lookup user
         var user = await _users.GetByIdAsync(authResult.UserId)
             ?? throw new UnauthorizedAccessException("User not found.");
 
-        // 5. Check user status
+        // 6. Check user status
         if (user.Status != "active")
             throw new ForbiddenException($"User account is {user.Status}.");
 
-        // 6. Session limit check
+        // 7. Check company status
+        var company = await _companies.GetByIdAsync(user.CompanyId)
+            ?? throw new UnauthorizedAccessException("Company not found.");
+        if (company.Status != "active")
+            throw new ForbiddenException($"Company account is {company.Status}.");
+
+        // 8. Session limit check
         var maxSessions = Cfg("max_concurrent_sessions", 3);
         var activeSessions = await _sessions.CountActiveByUserAsync(user.Id);
         if (activeSessions >= maxSessions)
@@ -116,8 +131,9 @@ public class AuthService : IAuthService
                 await _sessions.EndSessionAsync(oldest.Id, "replaced");
         }
 
-        // Fix 5: wrap session + refresh token creation in a transaction
+        // 9. Create session + refresh token in a transaction
         var absoluteTimeout = Cfg("session_absolute_timeout_minutes", 480);
+        var idleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30);
         var refreshExpiryDays = Cfg("jwt_refresh_expiry_days", 7);
 
         Session session;
@@ -133,7 +149,8 @@ public class AuthService : IAuthService
                     UserId = user.Id,
                     IpAddress = ipAddress,
                     UserAgent = userAgent,
-                    ExpiresAt = now.AddMinutes(absoluteTimeout)
+                    ExpiresAt = now.AddMinutes(absoluteTimeout),
+                    IdleTimeoutMinutes = idleTimeoutMinutes
                 }, conn, tx);
 
                 var (plain, hash) = _jwt.GenerateRefreshToken();
@@ -156,7 +173,6 @@ public class AuthService : IAuthService
             }
         }
 
-        // Fix 1: include session_id + platform roles in JWT
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
         var accessToken = _jwt.IssueAccessToken(user, session.Id, platformRoles);
         var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
@@ -269,10 +285,27 @@ public class AuthService : IAuthService
         };
     }
 
-    public async Task<UserProfileResponse> GetProfileAsync(Guid userId)
+    public async Task<UserProfileResponse> GetProfileAsync(Guid userId, string? appSlug)
     {
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
+
+        var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(userId);
+
+        IEnumerable<AppAccessDto> appAccess = [];
+        if (!string.IsNullOrEmpty(appSlug))
+        {
+            var context = await _userContext.GetUserContextAsync(userId, appSlug);
+            appAccess =
+            [
+                new AppAccessDto
+                {
+                    AppSlug = appSlug,
+                    RoleName = string.Join(", ", context.Roles),
+                    Permissions = context.Permissions
+                }
+            ];
+        }
 
         return new UserProfileResponse
         {
@@ -282,7 +315,9 @@ public class AuthService : IAuthService
             RoleTitle = user.RoleTitle,
             CompanyId = user.CompanyId.ToString(),
             Status = user.Status,
-            LastSeenAt = user.LastSeenAt
+            LastSeenAt = user.LastSeenAt,
+            PlatformRoles = platformRoles,
+            AppAccess = appAccess
         };
     }
 }
