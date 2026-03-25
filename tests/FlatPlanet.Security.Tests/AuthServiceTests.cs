@@ -24,22 +24,26 @@ public class AuthServiceTests
     private readonly Mock<IDbConnectionFactory> _db = new();
     private readonly Mock<IDbConnection> _conn = new();
     private readonly Mock<IDbTransaction> _tx = new();
+    private readonly Mock<ICompanyRepository> _companies = new();
+    private readonly Mock<IUserContextService> _userContext = new();
 
     private AuthService CreateService() => new(
         _supabaseAuth.Object, _jwt.Object, _users.Object,
         _sessions.Object, _refreshTokens.Object,
         _loginAttempts.Object, _auditLog.Object, _securityConfig.Object,
-        _roles.Object, _db.Object);
+        _roles.Object, _db.Object, _companies.Object, _userContext.Object);
 
     private void SetupDefaultConfig()
     {
         var configs = new List<SecurityConfig>
         {
             new() { ConfigKey = "rate_limit_login_per_ip_per_minute", ConfigValue = "5" },
+            new() { ConfigKey = "rate_limit_login_per_email_per_minute", ConfigValue = "10" },
             new() { ConfigKey = "max_failed_login_attempts", ConfigValue = "5" },
             new() { ConfigKey = "lockout_duration_minutes", ConfigValue = "30" },
             new() { ConfigKey = "max_concurrent_sessions", ConfigValue = "3" },
             new() { ConfigKey = "session_absolute_timeout_minutes", ConfigValue = "480" },
+            new() { ConfigKey = "session_idle_timeout_minutes", ConfigValue = "30" },
             new() { ConfigKey = "jwt_refresh_expiry_days", ConfigValue = "7" },
             new() { ConfigKey = "jwt_access_expiry_minutes", ConfigValue = "60" },
         };
@@ -63,6 +67,7 @@ public class AuthServiceTests
         var companyId = Guid.NewGuid();
 
         _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.RecordAsync(It.IsAny<LoginAttempt>())).Returns(Task.CompletedTask);
 
@@ -71,6 +76,9 @@ public class AuthServiceTests
 
         _users.Setup(u => u.GetByIdAsync(userId))
             .ReturnsAsync(new User { Id = userId, CompanyId = companyId, Email = "user@test.com", FullName = "Test User", Status = "active" });
+
+        _companies.Setup(c => c.GetByIdAsync(companyId))
+            .ReturnsAsync(new Company { Id = companyId, Name = "Test Co", Status = "active" });
 
         _sessions.Setup(s => s.CountActiveByUserAsync(userId)).ReturnsAsync(0);
         _sessions.Setup(s => s.CreateAsync(It.IsAny<Session>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
@@ -102,6 +110,7 @@ public class AuthServiceTests
         // Arrange
         SetupDefaultConfig();
         _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.RecordAsync(It.IsAny<LoginAttempt>())).Returns(Task.CompletedTask);
         _supabaseAuth.Setup(s => s.SignInAsync(It.IsAny<string>(), It.IsAny<string>()))
@@ -121,6 +130,7 @@ public class AuthServiceTests
         // Arrange
         SetupDefaultConfig();
         _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         // 5 recent failures = locked
         _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(5);
 
@@ -147,6 +157,22 @@ public class AuthServiceTests
     }
 
     [Fact]
+    public async Task Login_ShouldReturn429_WhenEmailRateLimitExceeded()
+    {
+        // Arrange
+        SetupDefaultConfig();
+        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        // 10 attempts for this email in the last minute = limit hit
+        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(10);
+
+        var service = CreateService();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<TooManyRequestsException>(() =>
+            service.LoginAsync(new LoginRequest { Email = "user@test.com", Password = "pass" }, null, null));
+    }
+
+    [Fact]
     public async Task Login_ShouldReturn403_WhenUserInactive()
     {
         // Arrange
@@ -154,11 +180,37 @@ public class AuthServiceTests
         var userId = Guid.NewGuid();
 
         _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
         _supabaseAuth.Setup(s => s.SignInAsync(It.IsAny<string>(), It.IsAny<string>()))
             .ReturnsAsync(new SupabaseAuthResult { UserId = userId });
         _users.Setup(u => u.GetByIdAsync(userId))
             .ReturnsAsync(new User { Id = userId, Status = "inactive" });
+
+        var service = CreateService();
+
+        // Act & Assert
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            service.LoginAsync(new LoginRequest { Email = "user@test.com", Password = "pass" }, null, null));
+    }
+
+    [Fact]
+    public async Task Login_ShouldReturn403_WhenCompanySuspended()
+    {
+        // Arrange
+        SetupDefaultConfig();
+        var userId = Guid.NewGuid();
+        var companyId = Guid.NewGuid();
+
+        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _supabaseAuth.Setup(s => s.SignInAsync(It.IsAny<string>(), It.IsAny<string>()))
+            .ReturnsAsync(new SupabaseAuthResult { UserId = userId });
+        _users.Setup(u => u.GetByIdAsync(userId))
+            .ReturnsAsync(new User { Id = userId, CompanyId = companyId, Status = "active" });
+        _companies.Setup(c => c.GetByIdAsync(companyId))
+            .ReturnsAsync(new Company { Id = companyId, Name = "Acme", Status = "suspended" });
 
         var service = CreateService();
 

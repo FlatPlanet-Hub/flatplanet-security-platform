@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -16,11 +16,16 @@
   </ItemGroup>
 
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\FlatPlanet.Security.Application\FlatPlanet.Security.Application.csproj" />
+    <ProjectReference Include="..\..\src\FlatPlanet.Security.API\FlatPlanet.Security.API.csproj" />
   </ItemGroup>
 
 </Project>
