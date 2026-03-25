@@ -11,7 +11,7 @@ namespace FlatPlanet.Security.Application.Services;
 
 public class AuthService : IAuthService
 {
-    private readonly ISupabaseAuthClient _supabaseAuth;
+    private readonly IPasswordHasher _passwordHasher;
     private readonly IJwtService _jwt;
     private readonly IUserRepository _users;
     private readonly ISessionRepository _sessions;
@@ -25,7 +25,7 @@ public class AuthService : IAuthService
     private readonly IUserContextService _userContext;
 
     public AuthService(
-        ISupabaseAuthClient supabaseAuth,
+        IPasswordHasher passwordHasher,
         IJwtService jwt,
         IUserRepository users,
         ISessionRepository sessions,
@@ -38,7 +38,7 @@ public class AuthService : IAuthService
         ICompanyRepository companies,
         IUserContextService userContext)
     {
-        _supabaseAuth = supabaseAuth;
+        _passwordHasher = passwordHasher;
         _jwt = jwt;
         _users = users;
         _sessions = sessions;
@@ -84,10 +84,10 @@ public class AuthService : IAuthService
         if (recentFailures >= maxFailures)
             throw new AccountLockedException("Account is temporarily locked. Please try again later.");
 
-        // 4. Verify with Supabase Auth
-        var authResult = await _supabaseAuth.SignInAsync(request.Email, request.Password);
+        // 4. Look up user by email and verify password
+        var user = await _users.GetByEmailAsync(request.Email);
 
-        if (authResult is null)
+        if (user == null || !_passwordHasher.Verify(request.Password, user.PasswordHash))
         {
             await _loginAttempts.RecordAsync(new LoginAttempt
             {
@@ -106,10 +106,6 @@ public class AuthService : IAuthService
             });
             throw new UnauthorizedAccessException("Invalid email or password.");
         }
-
-        // 5. Lookup user
-        var user = await _users.GetByIdAsync(authResult.UserId)
-            ?? throw new UnauthorizedAccessException("User not found.");
 
         // 6. Check user status
         if (user.Status != "active")
