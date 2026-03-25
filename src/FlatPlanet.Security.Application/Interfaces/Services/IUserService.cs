@@ -5,6 +5,7 @@ namespace FlatPlanet.Security.Application.Interfaces.Services;
 
 public interface IUserService
 {
+    Task<UserResponse> CreateAsync(CreateUserRequest request);
     Task<PagedResult<UserResponse>> GetPagedAsync(UserQueryParams query);
     Task<IEnumerable<UserResponse>> GetAllAsync();
     Task<UserDetailResponse> GetByIdAsync(Guid id);
