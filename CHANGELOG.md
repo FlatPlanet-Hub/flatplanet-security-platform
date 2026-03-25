@@ -4,6 +4,25 @@ All notable changes to the FlatPlanet Security Platform are documented here.
 
 ---
 
+## [1.1.0] — 2026-03-25
+
+Standalone authentication release. Removes Supabase Auth dependency — platform owns the full auth stack.
+
+---
+
+### Phase 10 — Standalone Authentication (PR #12)
+
+- **Removed Supabase Auth** — `ISupabaseAuthClient`, `SupabaseAuthClient`, `SupabaseOptions` deleted entirely
+- **bcrypt password verification** — `LoginAsync` verifies credentials directly against `users.password_hash` (work factor 12); no external HTTP call on login
+- **`POST /api/v1/users`** — admins can now create users with a hashed password (returns `201 Created`)
+- **`DatabaseOptions`** replaces `SupabaseOptions` — DB config decoupled from auth provider; `appsettings.json` restructured
+- **Fix: duplicate unique values return 409** — `ExceptionHandlingMiddleware` now catches `PostgresException` SqlState `23505`; covers duplicate emails, slugs, role names, and all unique constraints
+- **Fix: `IPasswordHasher` registered as Singleton** — stateless, no reason to allocate per request
+- **DB migration V5** — `ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL`; `id` column gets `DEFAULT gen_random_uuid()`
+- 25/25 tests passing
+
+---
+
 ## [1.0.0] — 2026-03-25
 
 Production release. Complete authentication, authorization, admin management, audit/compliance, and security hardening.
