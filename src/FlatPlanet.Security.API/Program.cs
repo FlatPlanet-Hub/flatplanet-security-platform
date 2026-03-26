@@ -108,6 +108,12 @@ builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
 
 var app = builder.Build();
 
+// Pre-warm the DB connection pool so the first login request doesn't pay
+// the cold-start SSL handshake cost for every sequential DB call (~20s on Supabase).
+var dbFactory = app.Services.GetRequiredService<IDbConnectionFactory>();
+using (var c1 = await dbFactory.CreateConnectionAsync())
+using (var c2 = await dbFactory.CreateConnectionAsync()) { }
+
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseHttpsRedirection();
