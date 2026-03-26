@@ -8,7 +8,7 @@ namespace FlatPlanet.Security.API.Controllers;
 [ApiController]
 [Route("api/v1/companies")]
 [Authorize(Policy = "PlatformOwner")]
-public class CompanyController : ControllerBase
+public class CompanyController : ApiController
 {
     private readonly ICompanyService _companies;
 
@@ -18,34 +18,34 @@ public class CompanyController : ControllerBase
     public async Task<IActionResult> GetAll()
     {
         var result = await _companies.GetAllAsync();
-        return Ok(new { success = true, data = result });
+        return OkData(result);
     }
 
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetById(Guid id)
     {
         var result = await _companies.GetByIdAsync(id);
-        return Ok(new { success = true, data = result });
+        return OkData(result);
     }
 
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateCompanyRequest request)
     {
         var result = await _companies.CreateAsync(request);
-        return CreatedAtAction(nameof(GetById), new { id = result.Id }, new { success = true, data = result });
+        return CreatedData(nameof(GetById), new { id = result.Id }, result);
     }
 
     [HttpPut("{id:guid}")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateCompanyRequest request)
     {
         var result = await _companies.UpdateAsync(id, request);
-        return Ok(new { success = true, data = result });
+        return OkData(result);
     }
 
     [HttpPut("{id:guid}/status")]
     public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] UpdateCompanyStatusRequest request)
     {
         await _companies.UpdateStatusAsync(id, request.Status);
-        return Ok(new { success = true, message = "Status updated." });
+        return OkMessage("Status updated.");
     }
 }

@@ -8,7 +8,7 @@ namespace FlatPlanet.Security.API.Controllers;
 [ApiController]
 [Route("api/v1/audit")]
 [Authorize(Policy = "AdminAccess")]
-public class AuditController : ControllerBase
+public class AuditController : ApiController
 {
     private readonly IAuditLogRepository _auditLog;
 
@@ -41,6 +41,6 @@ public class AuditController : ControllerBase
             PageSize = p.PageSize
         };
 
-        return Ok(new { success = true, data = response });
+        return OkData(response);
     }
 }

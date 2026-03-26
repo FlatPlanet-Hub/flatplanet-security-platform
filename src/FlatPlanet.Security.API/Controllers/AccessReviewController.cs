@@ -7,7 +7,7 @@ namespace FlatPlanet.Security.API.Controllers;
 [ApiController]
 [Route("api/v1/access-review")]
 [Authorize(Policy = "AdminAccess")]
-public class AccessReviewController : ControllerBase
+public class AccessReviewController : ApiController
 {
     private readonly IAccessReviewService _accessReview;
 
@@ -21,6 +21,6 @@ public class AccessReviewController : ControllerBase
         [FromQuery] Guid? appId = null)
     {
         var result = await _accessReview.GetAccessReviewAsync(page, pageSize, companyId, appId);
-        return Ok(new { success = true, data = result });
+        return OkData(result);
     }
 }
