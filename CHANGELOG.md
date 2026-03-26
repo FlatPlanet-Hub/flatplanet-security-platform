@@ -4,6 +4,23 @@ All notable changes to the FlatPlanet Security Platform are documented here.
 
 ---
 
+## [1.2.0] — 2026-03-27
+
+Controller refactor, cold-start fix, and complete API reference documentation.
+
+---
+
+### Phase 11 — Controller Refactor & Performance
+
+- **`ApiController` base class** — extracted `OkData`, `Created201`, `CreatedData`, `OkMessage`, `FailBadRequest`, `FailUnauthorized`, `GetUserId`, `TryGetUserId`, `TryGetSessionId` helpers; all 16 controllers now extend it — eliminates inline `new { success, ... }` and duplicated claim extraction across the codebase
+- **`AuthService` parallelism** — `LoadConfigAsync()` extracted; 3 rate-limit checks + 4 post-login operations parallelized with `Task.WhenAll`; reduces login latency under concurrent load
+- **`CompanyService` parallelism** — `UpdateStatusAsync` user-loop parallelized; inactive user processing runs concurrently
+- **Fix: `company_deactivated` audit event** — `UpdateStatusAsync` was logging `company_suspended` for both `suspended` and `inactive`; now correctly fires `CompanyDeactivated` for `inactive` status
+- **Fix: DB connection cold-start** — `IDbConnectionFactory` now pre-warms the pool at startup via `SELECT 1`; eliminates ~20s first-request delay after deployment
+- **Docs: `docs/api-reference.md`** — complete API reference covering all 42 endpoints with request/response schemas, field tables, realistic examples, error cases, and edge case notes
+
+---
+
 ## [1.1.0] — 2026-03-25
 
 Standalone authentication release. Removes Supabase Auth dependency — platform owns the full auth stack.
