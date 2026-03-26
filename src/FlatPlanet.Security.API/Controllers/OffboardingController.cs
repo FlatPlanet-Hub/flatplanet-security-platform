@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -8,7 +7,7 @@ namespace FlatPlanet.Security.API.Controllers;
 [ApiController]
 [Route("api/v1/users")]
 [Authorize(Policy = "AdminAccess")]
-public class OffboardingController : ControllerBase
+public class OffboardingController : ApiController
 {
     private readonly IOffboardingService _offboarding;
 
@@ -17,10 +16,8 @@ public class OffboardingController : ControllerBase
     [HttpPost("{id:guid}/offboard")]
     public async Task<IActionResult> Offboard(Guid id)
     {
-        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        if (!Guid.TryParse(sub, out var requestedBy))
-            throw new UnauthorizedAccessException("Invalid token: user ID claim missing.");
+        var requestedBy = GetUserId();
         await _offboarding.OffboardAsync(id, requestedBy);
-        return Ok(new { success = true, message = "User offboarded successfully." });
+        return OkMessage("User offboarded successfully.");
     }
 }

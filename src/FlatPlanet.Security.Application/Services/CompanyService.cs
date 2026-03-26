@@ -86,16 +86,15 @@ public class CompanyService : ICompanyService
         else if (status == "inactive")
         {
             var users = await _users.GetByCompanyIdAsync(id);
-            foreach (var user in users)
-            {
-                await _userAppRoles.SuspendAllByUserAsync(user.Id);
-                await _users.UpdateStatusAsync(user.Id, status);
-            }
+            await Task.WhenAll(users.Select(user => Task.WhenAll(
+                _userAppRoles.SuspendAllByUserAsync(user.Id),
+                _users.UpdateStatusAsync(user.Id, status)
+            )));
 
             await _auditLog.LogAsync(new AuthAuditLog
             {
                 UserId = null,
-                EventType = AuditEventType.CompanySuspended,
+                EventType = AuditEventType.CompanyDeactivated,
                 Details = JsonSerializer.Serialize(new { company_id = id, status })
             });
         }

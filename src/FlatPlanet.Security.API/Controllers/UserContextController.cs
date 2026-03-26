@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -8,7 +7,7 @@ namespace FlatPlanet.Security.API.Controllers;
 [ApiController]
 [Route("api/v1/apps")]
 [Authorize]
-public class UserContextController : ControllerBase
+public class UserContextController : ApiController
 {
     private readonly IUserContextService _userContextService;
 
@@ -20,11 +19,10 @@ public class UserContextController : ControllerBase
     [HttpGet("{appSlug}/user-context")]
     public async Task<IActionResult> GetUserContext(string appSlug)
     {
-        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        if (!Guid.TryParse(sub, out var userId))
-            return Unauthorized(new { success = false, message = "Invalid token." });
+        if (!TryGetUserId(out var userId))
+            return FailUnauthorized();
 
         var result = await _userContextService.GetUserContextAsync(userId, appSlug);
-        return Ok(new { success = true, data = result });
+        return OkData(result);
     }
 }

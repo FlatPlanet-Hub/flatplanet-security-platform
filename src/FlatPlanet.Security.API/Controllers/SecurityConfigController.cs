@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -8,7 +7,7 @@ namespace FlatPlanet.Security.API.Controllers;
 [ApiController]
 [Route("api/v1/security/config")]
 [Authorize(Policy = "PlatformOwner")]
-public class SecurityConfigController : ControllerBase
+public class SecurityConfigController : ApiController
 {
     private readonly ISecurityConfigService _config;
 
@@ -18,17 +17,15 @@ public class SecurityConfigController : ControllerBase
     public async Task<IActionResult> GetAll()
     {
         var result = await _config.GetAllAsync();
-        return Ok(new { success = true, data = result });
+        return OkData(result);
     }
 
     [HttpPut("{key}")]
     public async Task<IActionResult> Update(string key, [FromBody] UpdateConfigRequest request)
     {
-        var sub = User.FindFirstValue(ClaimTypes.NameIdentifier) ?? User.FindFirstValue("sub");
-        if (!Guid.TryParse(sub, out var userId))
-            throw new UnauthorizedAccessException("Invalid token: user ID claim missing.");
+        var userId = GetUserId();
         await _config.UpdateAsync(key, request.Value, userId);
-        return Ok(new { success = true, message = "Config updated." });
+        return OkMessage("Config updated.");
     }
 }
 
