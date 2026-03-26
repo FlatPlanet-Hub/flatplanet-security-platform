@@ -13,6 +13,7 @@ public class UserAppAccessDto
     public string AppName { get; set; } = string.Empty;
     public string AppSlug { get; set; } = string.Empty;
     public string RoleName { get; set; } = string.Empty;
+    public string[] Permissions { get; set; } = [];
     public string Status { get; set; } = string.Empty;
     public DateTime GrantedAt { get; set; }
     public DateTime? ExpiresAt { get; set; }
@@ -26,6 +27,7 @@ public class UserAppRoleDetail
     public string AppName { get; set; } = string.Empty;
     public string AppSlug { get; set; } = string.Empty;
     public string RoleName { get; set; } = string.Empty;
+    public string Permissions { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public DateTime GrantedAt { get; set; }
     public DateTime? ExpiresAt { get; set; }

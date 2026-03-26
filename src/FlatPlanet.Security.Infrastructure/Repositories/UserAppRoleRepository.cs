@@ -98,13 +98,18 @@ public class UserAppRoleRepository : IUserAppRoleRepository
             SELECT uar.id, uar.user_id, uar.app_id,
                    a.name AS app_name, a.slug AS app_slug,
                    r.name AS role_name,
+                   COALESCE(string_agg(p.name, ',' ORDER BY p.name), '') AS permissions,
                    uar.status, uar.granted_at, uar.expires_at
             FROM user_app_roles uar
             JOIN apps a ON a.id = uar.app_id
             JOIN roles r ON r.id = uar.role_id
+            LEFT JOIN role_permissions rp ON rp.role_id = r.id
+            LEFT JOIN permissions p ON p.id = rp.permission_id
             WHERE uar.user_id = @UserId
               AND uar.status = 'active'
               AND (uar.expires_at IS NULL OR uar.expires_at > now())
+            GROUP BY uar.id, uar.user_id, uar.app_id, a.name, a.slug,
+                     r.name, uar.status, uar.granted_at, uar.expires_at
             ORDER BY a.name
             """,
             new { UserId = userId });

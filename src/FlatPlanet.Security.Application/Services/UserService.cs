@@ -74,6 +74,8 @@ public class UserService : IUserService
                 AppName = d.AppName,
                 AppSlug = d.AppSlug,
                 RoleName = d.RoleName,
+                Permissions = d.Permissions
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
                 Status = d.Status,
                 GrantedAt = d.GrantedAt,
                 ExpiresAt = d.ExpiresAt
