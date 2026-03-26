@@ -56,68 +56,68 @@ public class AuthService : IAuthService
     {
         var now = DateTime.UtcNow;
 
-        var allConfig = (await _securityConfig.GetAllAsync())
-            .ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
+        var config = await LoadConfigAsync();
         int Cfg(string key, int def) =>
-            allConfig.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
+            config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
-        // 1. Per-IP rate limit
-        if (!string.IsNullOrEmpty(ipAddress))
-        {
-            var rateLimitPerIp = Cfg("rate_limit_login_per_ip_per_minute", 5);
-            var ipFailures = await _loginAttempts.CountRecentFailuresByIpAsync(ipAddress, now.AddMinutes(-1));
-            if (ipFailures >= rateLimitPerIp)
-                throw new TooManyRequestsException("Too many login attempts from this IP.");
-        }
-
-        // 2. Per-email rate limit (all attempts, not just failures)
+        var rateLimitPerIp    = Cfg("rate_limit_login_per_ip_per_minute", 5);
         var rateLimitPerEmail = Cfg("rate_limit_login_per_email_per_minute", 10);
-        var emailAttempts = await _loginAttempts.CountRecentByEmailAsync(request.Email, now.AddMinutes(-1));
-        if (emailAttempts >= rateLimitPerEmail)
+        var maxFailures       = Cfg("max_failed_login_attempts", 5);
+        var lockoutMinutes    = Cfg("lockout_duration_minutes", 30);
+
+        // Run all three rate-limit / lockout checks in parallel
+        var ipCheckTask = string.IsNullOrEmpty(ipAddress)
+            ? Task.FromResult(0)
+            : _loginAttempts.CountRecentFailuresByIpAsync(ipAddress, now.AddMinutes(-1));
+        var emailAttemptsTask   = _loginAttempts.CountRecentByEmailAsync(request.Email, now.AddMinutes(-1));
+        var recentFailuresTask  = _loginAttempts.CountRecentFailuresByEmailAsync(request.Email, now.AddMinutes(-lockoutMinutes));
+
+        await Task.WhenAll(ipCheckTask, emailAttemptsTask, recentFailuresTask);
+
+        if (!string.IsNullOrEmpty(ipAddress) && ipCheckTask.Result >= rateLimitPerIp)
+            throw new TooManyRequestsException("Too many login attempts from this IP.");
+
+        if (emailAttemptsTask.Result >= rateLimitPerEmail)
             throw new TooManyRequestsException("Too many login attempts for this account.");
 
-        // 3. Account lockout check (failures in lockout window)
-        var maxFailures = Cfg("max_failed_login_attempts", 5);
-        var lockoutMinutes = Cfg("lockout_duration_minutes", 30);
-        var recentFailures = await _loginAttempts.CountRecentFailuresByEmailAsync(
-            request.Email, now.AddMinutes(-lockoutMinutes));
-        if (recentFailures >= maxFailures)
+        if (recentFailuresTask.Result >= maxFailures)
             throw new AccountLockedException("Account is temporarily locked. Please try again later.");
 
-        // 4. Look up user by email and verify password
+        // Look up user and verify password
         var user = await _users.GetByEmailAsync(request.Email);
 
         if (user == null || !_passwordHasher.Verify(request.Password, user.PasswordHash))
         {
-            await _loginAttempts.RecordAsync(new LoginAttempt
-            {
-                Email = request.Email,
-                IpAddress = ipAddress,
-                Success = false,
-                AttemptedAt = now
-            });
-            await _auditLog.LogAsync(new AuthAuditLog
-            {
-                UserId = null,
-                EventType = AuditEventType.LoginFailure,
-                IpAddress = ipAddress,
-                UserAgent = userAgent,
-                Details = JsonSerializer.Serialize(new { email = request.Email })
-            });
+            await Task.WhenAll(
+                _loginAttempts.RecordAsync(new LoginAttempt
+                {
+                    Email = request.Email,
+                    IpAddress = ipAddress,
+                    Success = false,
+                    AttemptedAt = now
+                }),
+                _auditLog.LogAsync(new AuthAuditLog
+                {
+                    UserId = null,
+                    EventType = AuditEventType.LoginFailure,
+                    IpAddress = ipAddress,
+                    UserAgent = userAgent,
+                    Details = JsonSerializer.Serialize(new { email = request.Email })
+                })
+            );
             throw new UnauthorizedAccessException("Invalid email or password.");
         }
 
-        // 6. Check user status
+        // Check user and company status
         if (user.Status != "active")
             throw new ForbiddenException($"User account is {user.Status}.");
 
-        // 7. Check company status
         var company = await _companies.GetByIdAsync(user.CompanyId)
             ?? throw new UnauthorizedAccessException("Company not found.");
         if (company.Status != "active")
             throw new ForbiddenException($"Company account is {company.Status}.");
 
-        // 8. Session limit check
+        // Session limit check
         var maxSessions = Cfg("max_concurrent_sessions", 3);
         var activeSessions = await _sessions.CountActiveByUserAsync(user.Id);
         if (activeSessions >= maxSessions)
@@ -127,10 +127,10 @@ public class AuthService : IAuthService
                 await _sessions.EndSessionAsync(oldest.Id, "replaced");
         }
 
-        // 9. Create session + refresh token in a transaction
-        var absoluteTimeout = Cfg("session_absolute_timeout_minutes", 480);
+        // Create session + refresh token in a transaction
+        var absoluteTimeout    = Cfg("session_absolute_timeout_minutes", 480);
         var idleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30);
-        var refreshExpiryDays = Cfg("jwt_refresh_expiry_days", 7);
+        var refreshExpiryDays  = Cfg("jwt_refresh_expiry_days", 7);
 
         Session session;
         string refreshTokenPlain;
@@ -173,29 +173,32 @@ public class AuthService : IAuthService
         var accessToken = _jwt.IssueAccessToken(user, session.Id, platformRoles);
         var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
 
-        await _auditLog.LogAsync(new AuthAuditLog
-        {
-            UserId = user.Id,
-            EventType = AuditEventType.LoginSuccess,
-            IpAddress = ipAddress,
-            UserAgent = userAgent
-        });
-        await _auditLog.LogAsync(new AuthAuditLog
-        {
-            UserId = user.Id,
-            EventType = AuditEventType.SessionStart,
-            IpAddress = ipAddress,
-            UserAgent = userAgent,
-            Details = JsonSerializer.Serialize(new { session_id = session.Id })
-        });
-        await _users.UpdateLastSeenAtAsync(user.Id, now);
-        await _loginAttempts.RecordAsync(new LoginAttempt
-        {
-            Email = request.Email,
-            IpAddress = ipAddress,
-            Success = true,
-            AttemptedAt = now
-        });
+        // Fire all post-login side-effects in parallel
+        await Task.WhenAll(
+            _auditLog.LogAsync(new AuthAuditLog
+            {
+                UserId = user.Id,
+                EventType = AuditEventType.LoginSuccess,
+                IpAddress = ipAddress,
+                UserAgent = userAgent
+            }),
+            _auditLog.LogAsync(new AuthAuditLog
+            {
+                UserId = user.Id,
+                EventType = AuditEventType.SessionStart,
+                IpAddress = ipAddress,
+                UserAgent = userAgent,
+                Details = JsonSerializer.Serialize(new { session_id = session.Id })
+            }),
+            _users.UpdateLastSeenAtAsync(user.Id, now),
+            _loginAttempts.RecordAsync(new LoginAttempt
+            {
+                Email = request.Email,
+                IpAddress = ipAddress,
+                Success = true,
+                AttemptedAt = now
+            })
+        );
 
         return new LoginResponse
         {
@@ -228,10 +231,9 @@ public class AuthService : IAuthService
 
     public async Task<RefreshResponse> RefreshAsync(RefreshRequest request, string? ipAddress)
     {
-        var allConfig = (await _securityConfig.GetAllAsync())
-            .ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
+        var config = await LoadConfigAsync();
         int Cfg(string key, int def) =>
-            allConfig.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
+            config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
         var tokenHash = _jwt.HashToken(request.RefreshToken);
         var stored = await _refreshTokens.GetByTokenHashAsync(tokenHash);
@@ -316,4 +318,7 @@ public class AuthService : IAuthService
             AppAccess = appAccess
         };
     }
+
+    private async Task<Dictionary<string, string>> LoadConfigAsync()
+        => (await _securityConfig.GetAllAsync()).ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
 }

@@ -22,4 +22,5 @@ public static class AuditEventType
     public const string AuthorizeDenied = "authorize_denied";
     public const string UserAnonymized = "user_anonymized";
     public const string CompanySuspended = "company_suspended";
+    public const string CompanyDeactivated = "company_deactivated";
 }

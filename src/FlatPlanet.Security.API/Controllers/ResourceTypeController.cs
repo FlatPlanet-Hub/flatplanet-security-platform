@@ -8,7 +8,7 @@ namespace FlatPlanet.Security.API.Controllers;
 [ApiController]
 [Route("api/v1/resource-types")]
 [Authorize(Policy = "AdminAccess")]
-public class ResourceTypeController : ControllerBase
+public class ResourceTypeController : ApiController
 {
     private readonly IResourceTypeService _resourceTypes;
 
@@ -18,13 +18,13 @@ public class ResourceTypeController : ControllerBase
     public async Task<IActionResult> GetAll()
     {
         var result = await _resourceTypes.GetAllAsync();
-        return Ok(new { success = true, data = result });
+        return OkData(result);
     }
 
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateResourceTypeRequest request)
     {
         var result = await _resourceTypes.CreateAsync(request);
-        return StatusCode(201, new { success = true, data = result });
+        return Created201(result);
     }
 }
