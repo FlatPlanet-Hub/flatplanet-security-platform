@@ -4,6 +4,22 @@ All notable changes to the FlatPlanet Security Platform are documented here.
 
 ---
 
+## [1.2.1] — 2026-03-27
+
+Validation envelope fix, ServiceToken registration, and seed data cleanup.
+
+---
+
+### Fixes
+
+- **Fix: `InvalidModelStateResponseFactory`** — validation errors (400) now return the platform envelope `{ success: false, message: "Validation failed.", errors: { field: ["msg"] } }` instead of ASP.NET's default `{ title, errors }` shape (PR #22)
+- **Fix: `ServiceTokenAuthHandler` registered** — `ServiceTokenOptions` now configured in DI; `ServiceToken` scheme added to both `PlatformOwner` and `AdminAccess` policies so server-to-server calls work correctly
+- **Fix: `appsettings.json`** — `ServiceToken` section added with placeholder value
+- **Fix: `seed_test_data.sql`** — simplified to Development Hub only (`dashboard-hub`); removed `platform-api` and `tala` test apps; updated Development Hub URL to `https://fpdevelopmenthub.netlify.app`
+- **Docs: `api-reference.md` → `security-api-reference.md`** — renamed for clarity; validation error shape documented
+
+---
+
 ## [1.2.0] — 2026-03-27
 
 Controller refactor, cold-start fix, and complete API reference documentation.
