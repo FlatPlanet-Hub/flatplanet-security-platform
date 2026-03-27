@@ -1,6 +1,6 @@
 # FlatPlanet Security Platform — API Reference
 
-**Version**: 1.2.0
+**Version**: 1.2.1
 **Base URL**: `https://<your-host>/api/v1`
 **Content-Type**: `application/json`
 **Auth**: Bearer JWT or Service Token in `Authorization` header
@@ -70,13 +70,27 @@ Every response wraps data in a consistent envelope:
 { "success": false, "message": "Invalid email or password." }
 ```
 
+**Validation Error (400):**
+```json
+{
+  "success": false,
+  "message": "Validation failed.",
+  "errors": {
+    "email": ["The Email field is required."],
+    "password": ["The Password field must not exceed 128 characters."]
+  }
+}
+```
+
+The `errors` object is keyed by field name. Each key holds an array of error messages for that field. This shape applies to all endpoints that use request DTO validation (`[Required]`, `[MaxLength]`, `[EmailAddress]`, `[RegularExpression]`).
+
 ---
 
 ## Error Reference
 
 | HTTP | When it fires |
 |---|---|
-| `400` | Missing required field, validation failure |
+| `400` | Missing required field or validation failure — see validation error shape above |
 | `401` | Missing/expired/invalid token, session timed out, invalid credentials |
 | `403` | Authenticated but not permitted (wrong role, suspended account) |
 | `404` | Resource not found |
@@ -1616,10 +1630,11 @@ GET /api/v1/access-review?companyId=7c9e6679-7425-40de-944b-e07fc1f90ae7&page=1&
 
 ### Versioning
 
-The current API version is `v1`, reflected in all endpoint paths (`/api/v1/...`). The current platform release is **1.2.0**.
+The current API version is `v1`, reflected in all endpoint paths (`/api/v1/...`). The current platform release is **1.2.1**.
 
 | Version | Date | Summary |
 |---|---|---|
+| `1.2.1` | 2026-03-27 | Validation errors now return platform envelope `{ success, message, errors }`. ServiceToken auth handler registered. Seed data simplified to Development Hub only. |
 | `1.2.0` | 2026-03-27 | Controller refactor (`ApiController` base). Service Token auth documented. Permission `category` field. `UserContextResponse` full shape. `UserAccessResponse` with `userFullName`. Resource status values corrected. Compliance export shape documented. |
 | `1.1.0` | 2026-03-25 | Standalone bcrypt authentication. Added `POST /api/v1/users`. Removed Supabase Auth dependency. |
 | `1.0.0` | 2026-03-25 | Production release. Full auth, authorization, admin CRUD, audit/compliance, spec hardening. |

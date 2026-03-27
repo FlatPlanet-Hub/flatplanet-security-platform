@@ -154,6 +154,6 @@ Backend services (e.g. HubApi) authenticate using a static bearer token configur
 
 ## Documentation
 
-- **[API Reference](docs/api-reference.md)** — all 42 endpoints with request/response schemas, field tables, error cases
+- **[API Reference](docs/security-api-reference.md)** — all 42 endpoints with request/response schemas, field tables, error cases
 - **[Changelog](CHANGELOG.md)** — full version history
 - **[Feature Spec](docs/Feature.md)** — complete feature specification and requirements

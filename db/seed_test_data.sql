@@ -12,29 +12,11 @@ DECLARE
     v_admin_id          UUID;
     v_user_id           UUID;
 
-    -- Apps
-    v_app_platform_api  UUID;
-    v_app_tala          UUID;
+    -- App
     v_app_hub           UUID;
 
     -- Platform role (pre-seeded by V1)
     v_role_owner        UUID;
-
-    -- platform-api roles & permissions
-    v_pa_role_admin     UUID;
-    v_pa_role_dev       UUID;
-    v_pa_role_viewer    UUID;
-    v_pa_perm_read      UUID;
-    v_pa_perm_write     UUID;
-    v_pa_perm_ddl       UUID;
-
-    -- tala roles & permissions
-    v_tala_role_admin   UUID;
-    v_tala_role_user    UUID;
-    v_tala_role_viewer  UUID;
-    v_tala_perm_read    UUID;
-    v_tala_perm_write   UUID;
-    v_tala_perm_manage  UUID;
 
     -- dashboard-hub roles & permissions
     v_hub_role_admin    UUID;
@@ -67,121 +49,41 @@ VALUES (v_company_id, 'user@flatplanet.com', 'Test User', 'Staff',
 RETURNING id INTO v_user_id;
 
 -- -----------------------------------------------------------------------
--- 3. Apps
+-- 3. App — FlatPlanet Development Hub (the only SP-registered app)
+--    Platform API (HubApi) is a backend service, not a user-facing app.
+--    Individual projects (e.g. Tala) are managed inside HubApi, not here.
 -- -----------------------------------------------------------------------
 INSERT INTO apps (company_id, name, slug, base_url, status, registered_by)
-VALUES (v_company_id, 'FlatPlanet Platform API', 'platform-api', 'https://platform-api.azurewebsites.net', 'active', v_admin_id)
-RETURNING id INTO v_app_platform_api;
-
-INSERT INTO apps (company_id, name, slug, base_url, status, registered_by)
-VALUES (v_company_id, 'Tala', 'tala', 'https://tala.flatplanet.com.au', 'active', v_admin_id)
-RETURNING id INTO v_app_tala;
-
-INSERT INTO apps (company_id, name, slug, base_url, status, registered_by)
-VALUES (v_company_id, 'FlatPlanet Development Hub', 'dashboard-hub', 'https://hub.flatplanet.com.au', 'active', v_admin_id)
+VALUES (v_company_id, 'FlatPlanet Development Hub', 'dashboard-hub',
+        'https://fpdevelopmenthub.netlify.app', 'active', v_admin_id)
 RETURNING id INTO v_app_hub;
 
 -- -----------------------------------------------------------------------
--- 4. Assign platform_owner role to Chris on all 3 apps
---    (user_app_roles.app_id NOT NULL forces one row per app)
+-- 4. Assign platform_owner role to Chris on dashboard-hub
 -- -----------------------------------------------------------------------
 SELECT id INTO v_role_owner FROM roles WHERE name = 'platform_owner' AND is_platform_role = true;
 
-INSERT INTO user_app_roles (user_id, app_id, role_id, granted_by, status) VALUES
-    (v_admin_id, v_app_platform_api, v_role_owner, v_admin_id, 'active'),
-    (v_admin_id, v_app_tala,         v_role_owner, v_admin_id, 'active'),
-    (v_admin_id, v_app_hub,          v_role_owner, v_admin_id, 'active');
+INSERT INTO user_app_roles (user_id, app_id, role_id, granted_by, status)
+VALUES (v_admin_id, v_app_hub, v_role_owner, v_admin_id, 'active');
 
 -- -----------------------------------------------------------------------
--- 5. platform-api — roles
--- -----------------------------------------------------------------------
-INSERT INTO roles (app_id, name, description, is_platform_role)
-VALUES (v_app_platform_api, 'Admin', 'Full access including schema changes', false)
-RETURNING id INTO v_pa_role_admin;
-
-INSERT INTO roles (app_id, name, description, is_platform_role)
-VALUES (v_app_platform_api, 'Developer', 'Read and write access, no DDL', false)
-RETURNING id INTO v_pa_role_dev;
-
-INSERT INTO roles (app_id, name, description, is_platform_role)
-VALUES (v_app_platform_api, 'Viewer', 'Read-only access', false)
-RETURNING id INTO v_pa_role_viewer;
-
--- 5a. platform-api — permissions
-INSERT INTO permissions (app_id, name, description, category)
-VALUES (v_app_platform_api, 'read', 'Execute SELECT queries', 'data')
-RETURNING id INTO v_pa_perm_read;
-
-INSERT INTO permissions (app_id, name, description, category)
-VALUES (v_app_platform_api, 'write', 'Execute INSERT/UPDATE/DELETE', 'data')
-RETURNING id INTO v_pa_perm_write;
-
-INSERT INTO permissions (app_id, name, description, category)
-VALUES (v_app_platform_api, 'ddl', 'Execute schema migrations', 'admin')
-RETURNING id INTO v_pa_perm_ddl;
-
--- 5b. platform-api — role → permission mappings
-INSERT INTO role_permissions (role_id, permission_id) VALUES
-    (v_pa_role_admin,  v_pa_perm_read),
-    (v_pa_role_admin,  v_pa_perm_write),
-    (v_pa_role_admin,  v_pa_perm_ddl),
-    (v_pa_role_dev,    v_pa_perm_read),
-    (v_pa_role_dev,    v_pa_perm_write),
-    (v_pa_role_viewer, v_pa_perm_read);
-
--- -----------------------------------------------------------------------
--- 6. Tala — roles
--- -----------------------------------------------------------------------
-INSERT INTO roles (app_id, name, description, is_platform_role)
-VALUES (v_app_tala, 'Admin', 'Full access within Tala', false)
-RETURNING id INTO v_tala_role_admin;
-
-INSERT INTO roles (app_id, name, description, is_platform_role)
-VALUES (v_app_tala, 'User', 'Standard access within Tala', false)
-RETURNING id INTO v_tala_role_user;
-
-INSERT INTO roles (app_id, name, description, is_platform_role)
-VALUES (v_app_tala, 'Viewer', 'Read-only access within Tala', false)
-RETURNING id INTO v_tala_role_viewer;
-
--- 6a. Tala — permissions
-INSERT INTO permissions (app_id, name, description, category)
-VALUES (v_app_tala, 'read_data', 'View records', 'data')
-RETURNING id INTO v_tala_perm_read;
-
-INSERT INTO permissions (app_id, name, description, category)
-VALUES (v_app_tala, 'write_data', 'Create and edit records', 'data')
-RETURNING id INTO v_tala_perm_write;
-
-INSERT INTO permissions (app_id, name, description, category)
-VALUES (v_app_tala, 'manage_settings', 'Configure Tala settings', 'admin')
-RETURNING id INTO v_tala_perm_manage;
-
--- 6b. Tala — role → permission mappings
-INSERT INTO role_permissions (role_id, permission_id) VALUES
-    (v_tala_role_admin,  v_tala_perm_read),
-    (v_tala_role_admin,  v_tala_perm_write),
-    (v_tala_role_admin,  v_tala_perm_manage),
-    (v_tala_role_user,   v_tala_perm_read),
-    (v_tala_role_user,   v_tala_perm_write),
-    (v_tala_role_viewer, v_tala_perm_read);
-
--- -----------------------------------------------------------------------
--- 7. FlatPlanet Development Hub — roles
+-- 5. dashboard-hub — roles
 -- -----------------------------------------------------------------------
 INSERT INTO roles (app_id, name, description, is_platform_role)
 VALUES (v_app_hub, 'Admin', 'Full access within the Hub', false)
 RETURNING id INTO v_hub_role_admin;
 
 INSERT INTO roles (app_id, name, description, is_platform_role)
-VALUES (v_app_hub, 'User', 'Standard access within the Hub', false)
+VALUES (v_app_hub, 'User', 'Can create and manage own projects', false)
 RETURNING id INTO v_hub_role_user;
 
 INSERT INTO roles (app_id, name, description, is_platform_role)
-VALUES (v_app_hub, 'Viewer', 'Read-only access within the Hub', false)
+VALUES (v_app_hub, 'Viewer', 'Read-only access to assigned projects', false)
 RETURNING id INTO v_hub_role_viewer;
 
--- 7a. Hub — permissions
+-- -----------------------------------------------------------------------
+-- 5a. dashboard-hub — permissions
+-- -----------------------------------------------------------------------
 INSERT INTO permissions (app_id, name, description, category)
 VALUES (v_app_hub, 'read_data', 'View projects and activity', 'data')
 RETURNING id INTO v_hub_perm_read;
@@ -194,7 +96,9 @@ INSERT INTO permissions (app_id, name, description, category)
 VALUES (v_app_hub, 'manage_settings', 'Configure Hub settings', 'admin')
 RETURNING id INTO v_hub_perm_manage;
 
--- 7b. Hub — role → permission mappings
+-- -----------------------------------------------------------------------
+-- 5b. dashboard-hub — role → permission mappings
+-- -----------------------------------------------------------------------
 INSERT INTO role_permissions (role_id, permission_id) VALUES
     (v_hub_role_admin,  v_hub_perm_read),
     (v_hub_role_admin,  v_hub_perm_write),
@@ -204,12 +108,10 @@ INSERT INTO role_permissions (role_id, permission_id) VALUES
     (v_hub_role_viewer, v_hub_perm_read);
 
 -- -----------------------------------------------------------------------
--- 8. Assign test user (Viewer) on all 3 apps
+-- 6. Assign test user (Viewer) on dashboard-hub
 -- -----------------------------------------------------------------------
-INSERT INTO user_app_roles (user_id, app_id, role_id, granted_by, status) VALUES
-    (v_user_id, v_app_platform_api, v_pa_role_viewer,   v_admin_id, 'active'),
-    (v_user_id, v_app_tala,         v_tala_role_viewer, v_admin_id, 'active'),
-    (v_user_id, v_app_hub,          v_hub_role_viewer,  v_admin_id, 'active');
+INSERT INTO user_app_roles (user_id, app_id, role_id, granted_by, status)
+VALUES (v_user_id, v_app_hub, v_hub_role_viewer, v_admin_id, 'active');
 
 RAISE NOTICE 'Seed complete. Company: %, Admin: %, User: %', v_company_id, v_admin_id, v_user_id;
 
