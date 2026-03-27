@@ -17,7 +17,8 @@ Controller refactor, cold-start fix, and complete API reference documentation.
 - **`CompanyService` parallelism** — `UpdateStatusAsync` user-loop parallelized; inactive user processing runs concurrently
 - **Fix: `company_deactivated` audit event** — `UpdateStatusAsync` was logging `company_suspended` for both `suspended` and `inactive`; now correctly fires `CompanyDeactivated` for `inactive` status
 - **Fix: DB connection cold-start** — `IDbConnectionFactory` now pre-warms the pool at startup via `SELECT 1`; eliminates ~20s first-request delay after deployment
-- **Docs: `docs/api-reference.md`** — complete API reference covering all 42 endpoints with request/response schemas, field tables, realistic examples, error cases, and edge case notes
+- **Fix: `UserAppAccessDto` permissions** — `GetDetailsByUserIdAsync` now joins `role_permissions` so user detail response includes permission names per app role (PR #21)
+- **Docs: `docs/api-reference.md`** — complete API reference covering all 42 endpoints with accurate request/response schemas, field tables, realistic examples, error cases, and edge case notes; includes Service Token auth, `PermissionResponse.category`, `UserContextResponse` full shape, `UserAccessResponse.userFullName`, resource status values, and compliance export shape
 
 ---
 

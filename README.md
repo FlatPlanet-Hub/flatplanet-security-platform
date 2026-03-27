@@ -127,6 +127,10 @@ dotnet test
 
 ## Authentication
 
+The platform supports two auth methods:
+
+**User auth (JWT)**
+
 The platform owns the full auth stack — no external provider. Passwords are stored as bcrypt hashes (work factor 12). On login, credentials are verified directly against the database and a JWT access token + refresh token are issued.
 
 ```
@@ -134,13 +138,17 @@ POST /api/v1/auth/login
 → { accessToken, refreshToken, expiresIn, user }
 ```
 
-All protected endpoints require:
+Protected endpoints require:
 
 ```
 Authorization: Bearer <accessToken>
 ```
 
 Sessions are enforced by middleware on every request — idle and absolute timeouts are configurable via the security config API.
+
+**Server-to-server (Service Token)**
+
+Backend services (e.g. HubApi) authenticate using a static bearer token configured in `appsettings.json` under `ServiceToken.Token`. The service token grants full `platform_owner` + `app_admin` access. Set a minimum 32-character secret and keep it out of source control.
 
 ---
 

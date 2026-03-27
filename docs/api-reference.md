@@ -1,9 +1,9 @@
 # FlatPlanet Security Platform — API Reference
 
-**Version**: 1.1.0
+**Version**: 1.2.0
 **Base URL**: `https://<your-host>/api/v1`
 **Content-Type**: `application/json`
-**Auth**: Bearer JWT in `Authorization` header
+**Auth**: Bearer JWT or Service Token in `Authorization` header
 
 ---
 
@@ -11,13 +11,23 @@
 
 ### Authentication
 
-All protected endpoints require a JWT access token:
+The platform supports two authentication methods:
+
+**1. JWT (user authentication)**
 
 ```
 Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
 ```
 
 Tokens are issued by `POST /api/v1/auth/login` and rotated by `POST /api/v1/auth/refresh`. The platform owns credential storage — passwords are hashed with bcrypt (work factor 12). No external auth provider is involved.
+
+**2. Service Token (server-to-server)**
+
+```
+Authorization: Bearer <service-token>
+```
+
+Used by trusted backend services (e.g. HubApi) to call the platform without a user context. The service token is a static secret configured in `appsettings.json` under `ServiceToken.Token` (minimum 32 characters). On a valid service token, the caller is granted both `platform_owner` and `app_admin` roles — it has full access to all endpoints. Token comparison uses constant-time equality to prevent timing attacks.
 
 **Access token lifetime**: configurable via `jwt_access_expiry_minutes` (default 60 min)
 **Refresh token lifetime**: configurable via `jwt_refresh_expiry_days` (default 7 days)
@@ -608,7 +618,23 @@ GET /api/v1/users/3f2504e0-4f89-11d3-9a0c-0305e82c3301/export
 
 #### Success Response — 200
 
-Returns a `ComplianceExportResponse` containing the user's profile, app access records, and audit log history.
+```json
+{
+  "success": true,
+  "data": {
+    "user": { "id": "...", "email": "alice@acme.com", "fullName": "Alice Chen", "..." : "..." },
+    "appRoles": [
+      { "id": "...", "userId": "...", "userEmail": "alice@acme.com", "userFullName": "Alice Chen", "roleId": "...", "roleName": "editor", "status": "active", "expiresAt": null }
+    ],
+    "sessions": [
+      { "id": "...", "ipAddress": "203.0.113.1", "userAgent": "Mozilla/5.0 ...", "isActive": false, "startedAt": "2026-03-01T08:00:00Z", "lastActiveAt": "2026-03-01T09:30:00Z" }
+    ],
+    "auditEvents": [
+      { "id": "...", "userId": "...", "appId": null, "eventType": "login_success", "ipAddress": "203.0.113.1", "userAgent": "...", "details": null, "createdAt": "2026-03-01T08:00:00Z" }
+    ],
+    "exportedAt": "2026-03-27T10:00:00Z"
+  }
+}
 
 #### Error Responses
 
@@ -712,7 +738,7 @@ Creates a new company. Default status is `active`.
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `name` | string | Yes | Max 200 chars. Must be unique. |
-| `countryCode` | string | Yes | 2-character ISO 3166-1 alpha-2 code (e.g. `US`, `GB`, `PH`). |
+| `countryCode` | string | Yes | ISO country code (e.g. `US`, `GB`, `PH`). Max 10 chars. |
 
 #### Success Response — 201
 
@@ -1081,7 +1107,8 @@ Creates a permission.
 ```json
 {
   "name": "create_reports",
-  "description": "Allows creating monthly reports."
+  "description": "Allows creating monthly reports.",
+  "category": "reporting"
 }
 ```
 
@@ -1091,16 +1118,35 @@ Creates a permission.
 |---|---|---|---|
 | `name` | string | Yes | Must be unique within the app. Max 100 chars. |
 | `description` | string | No | Max 500 chars. |
+| `category` | string | Yes | Groups permissions for display. Max 100 chars (e.g. `reporting`, `admin`, `billing`). |
 
 #### Success Response — 201
 
-Returns the created permission.
+Returns the created `PermissionResponse` (`id`, `appId`, `name`, `description`, `category`, `createdAt`).
 
 ---
 
 ### PUT /api/v1/apps/{appId}/permissions/{id}
 
-Updates a permission's name and description.
+Updates a permission's name, description, and category.
+
+#### Request
+
+```json
+{
+  "name": "create_reports",
+  "description": "Allows creating monthly reports.",
+  "category": "reporting"
+}
+```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | Yes | Max 100 chars. |
+| `description` | string | No | Max 500 chars. |
+| `category` | string | Yes | Max 100 chars. |
 
 ---
 
@@ -1135,20 +1181,37 @@ Creates a resource.
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `name` | string | Yes | Max 200 chars. |
-| `identifier` | string | Yes | Path or key used in `POST /api/v1/authorize` calls. Must be unique within the app. |
 | `resourceTypeId` | UUID | Yes | Must reference an existing resource type. |
-| `description` | string | No | Max 500 chars. |
+| `name` | string | Yes | Max 200 chars. |
+| `identifier` | string | Yes | Path or key used in `POST /api/v1/authorize` calls. Must be unique within the app. Max 200 chars. |
 
 #### Success Response — 201
 
-Returns the created resource.
+Returns the created `ResourceResponse` (`id`, `appId`, `resourceTypeId`, `name`, `identifier`, `status`, `createdAt`).
 
 ---
 
 ### PUT /api/v1/apps/{appId}/resources/{id}
 
-Updates a resource.
+Updates a resource's name, identifier, and status.
+
+#### Request
+
+```json
+{
+  "name": "Monthly Reports",
+  "identifier": "/reports/monthly",
+  "status": "active"
+}
+```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | Yes | Max 200 chars. |
+| `identifier` | string | Yes | Max 200 chars. |
+| `status` | string | Yes | `active` or `inactive` only. |
 
 ---
 
@@ -1171,12 +1234,22 @@ Creates a resource type.
 #### Request
 
 ```json
-{ "name": "report" }
+{
+  "name": "report",
+  "description": "Financial and operational reports."
+}
 ```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | Yes | Must be unique. |
+| `description` | string | No | — |
 
 #### Success Response — 201
 
-Returns the created resource type.
+Returns the created `ResourceTypeResponse` (`id`, `name`, `description`, `createdAt`).
 
 ---
 
@@ -1220,7 +1293,22 @@ Grants a user a role within an app.
 
 #### Success Response — 201
 
-Returns the created grant record.
+Returns the created `UserAccessResponse`:
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "a1b2c3d4-0000-0000-0000-000000000001",
+    "userId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+    "userEmail": "alice@acme.com",
+    "userFullName": "Alice Chen",
+    "roleId": "c1d2e3f4-0000-0000-0000-000000000001",
+    "roleName": "editor",
+    "status": "active",
+    "expiresAt": "2026-12-31T23:59:59Z"
+  }
+}
 
 ---
 
@@ -1280,12 +1368,28 @@ GET /api/v1/apps/dashboard-hub/user-context
 {
   "success": true,
   "data": {
-    "appSlug": "dashboard-hub",
+    "userId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+    "email": "alice@acme.com",
+    "fullName": "Alice Chen",
+    "companyName": "Acme Corp",
     "roles": ["editor"],
-    "permissions": ["read_reports", "create_reports"]
+    "permissions": ["read_reports", "create_reports"],
+    "allowedApps": [
+      {
+        "appId": "b1e2c3d4-1234-5678-abcd-ef0123456789",
+        "appSlug": "dashboard-hub",
+        "appName": "Dashboard Hub"
+      }
+    ]
   }
 }
 ```
+
+| Field | Notes |
+|---|---|
+| `roles` | All roles the user holds in the specified app. |
+| `permissions` | All permissions the user holds across all roles in the app. |
+| `allowedApps` | All apps the user currently has an active role grant in (across the platform, not just this app). |
 
 #### Error Responses
 
@@ -1512,9 +1616,10 @@ GET /api/v1/access-review?companyId=7c9e6679-7425-40de-944b-e07fc1f90ae7&page=1&
 
 ### Versioning
 
-The current API version is `v1`, reflected in all endpoint paths (`/api/v1/...`). The current platform release is **1.1.0**.
+The current API version is `v1`, reflected in all endpoint paths (`/api/v1/...`). The current platform release is **1.2.0**.
 
 | Version | Date | Summary |
 |---|---|---|
+| `1.2.0` | 2026-03-27 | Controller refactor (`ApiController` base). Service Token auth documented. Permission `category` field. `UserContextResponse` full shape. `UserAccessResponse` with `userFullName`. Resource status values corrected. Compliance export shape documented. |
 | `1.1.0` | 2026-03-25 | Standalone bcrypt authentication. Added `POST /api/v1/users`. Removed Supabase Auth dependency. |
 | `1.0.0` | 2026-03-25 | Production release. Full auth, authorization, admin CRUD, audit/compliance, spec hardening. |
