@@ -1,4 +1,6 @@
 using System.Text;
+using FlatPlanet.Security.API.Authentication;
+using Microsoft.AspNetCore.Authentication;
 using FlatPlanet.Security.API.Middleware;
 using FlatPlanet.Security.Application.Common.Options;
 using FlatPlanet.Security.Application.Interfaces;
@@ -24,6 +26,7 @@ var dbOptions = builder.Configuration.GetSection(DatabaseOptions.Section).Get<Da
 var jwtOptions = builder.Configuration.GetSection(JwtOptions.Section).Get<JwtOptions>()!;
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.Section));
+builder.Services.Configure<ServiceTokenOptions>(builder.Configuration.GetSection(ServiceTokenOptions.Section));
 
 // Database
 builder.Services.AddSingleton<IDbConnectionFactory>(
@@ -44,6 +47,7 @@ builder.Services.AddCors(options =>
 
 // Authentication
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddScheme<AuthenticationSchemeOptions, ServiceTokenAuthHandler>("ServiceToken", _ => { })
     .AddJwtBearer(options =>
     {
         options.TokenValidationParameters = new TokenValidationParameters
@@ -61,14 +65,36 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
 
 builder.Services.AddAuthorization(options =>
 {
-    options.AddPolicy("PlatformOwner", policy => policy.RequireRole("platform_owner"));
-    options.AddPolicy("AdminAccess", policy => policy.RequireRole("platform_owner", "app_admin"));
+    options.AddPolicy("PlatformOwner", policy =>
+        policy.AddAuthenticationSchemes("ServiceToken", JwtBearerDefaults.AuthenticationScheme)
+              .RequireRole("platform_owner"));
+    options.AddPolicy("AdminAccess", policy =>
+        policy.AddAuthenticationSchemes("ServiceToken", JwtBearerDefaults.AuthenticationScheme)
+              .RequireRole("platform_owner", "app_admin"));
 });
 
 // OpenAPI
 builder.Services.AddOpenApi();
 
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var errors = context.ModelState
+                .Where(e => e.Value?.Errors.Count > 0)
+                .ToDictionary(
+                    e => e.Key,
+                    e => e.Value!.Errors.Select(x => x.ErrorMessage).ToArray());
+
+            return new Microsoft.AspNetCore.Mvc.BadRequestObjectResult(new
+            {
+                success = false,
+                message = "Validation failed.",
+                errors
+            });
+        };
+    });
 builder.Services.AddHealthChecks();
 
 // Repositories
