@@ -1,6 +1,6 @@
-using System.Security.Claims;
 using FlatPlanet.Security.Application.DTOs.Admin;
 using FlatPlanet.Security.Application.DTOs.Users;
+using FlatPlanet.Security.Application.Helpers;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Domain.Enums;
@@ -44,11 +44,11 @@ public class UserService : IUserService
         var created = await _users.CreateAsync(user);
 
         await _adminAudit.LogAsync(
-            GetActorId(), GetActorEmail(), AdminAction.UserCreate,
+            ActorContext.GetActorId(_httpContext), ActorContext.GetActorEmail(_httpContext), AdminAction.UserCreate,
             "user", created.Id,
             null,
             new { created.Id, created.Email, created.FullName, created.Status },
-            GetIpAddress());
+            ActorContext.GetIpAddress(_httpContext));
 
         return MapToResponse(created);
     }
@@ -114,11 +114,11 @@ public class UserService : IUserService
         await _users.UpdateAsync(user);
 
         await _adminAudit.LogAsync(
-            GetActorId(), GetActorEmail(), AdminAction.UserUpdate,
+            ActorContext.GetActorId(_httpContext), ActorContext.GetActorEmail(_httpContext), AdminAction.UserUpdate,
             "user", id,
             before,
             new { user.FullName, user.RoleTitle },
-            GetIpAddress());
+            ActorContext.GetIpAddress(_httpContext));
 
         return MapToResponse(user);
     }
@@ -137,27 +137,12 @@ public class UserService : IUserService
         };
 
         await _adminAudit.LogAsync(
-            GetActorId(), GetActorEmail(), action,
+            ActorContext.GetActorId(_httpContext), ActorContext.GetActorEmail(_httpContext), action,
             "user", id,
             new { status = oldStatus },
             new { status },
-            GetIpAddress());
+            ActorContext.GetIpAddress(_httpContext));
     }
-
-    private Guid GetActorId()
-    {
-        var sub = _httpContext.HttpContext?.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-               ?? _httpContext.HttpContext?.User.FindFirst("sub")?.Value;
-        return Guid.TryParse(sub, out var id) ? id : Guid.Empty;
-    }
-
-    private string GetActorEmail() =>
-        _httpContext.HttpContext?.User.FindFirst(ClaimTypes.Email)?.Value
-        ?? _httpContext.HttpContext?.User.FindFirst("email")?.Value
-        ?? "unknown";
-
-    private string? GetIpAddress() =>
-        _httpContext.HttpContext?.Connection.RemoteIpAddress?.ToString();
 
     private static UserResponse MapToResponse(Domain.Entities.User u) => new()
     {
