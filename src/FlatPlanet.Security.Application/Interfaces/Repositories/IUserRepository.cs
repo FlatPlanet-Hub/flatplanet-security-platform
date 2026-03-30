@@ -15,4 +15,6 @@ public interface IUserRepository
     Task UpdateStatusAsync(Guid userId, string status);
     Task SuspendByCompanyIdAsync(Guid companyId);
     Task<User> CreateAsync(User user);
+    Task UpdatePhoneNumberAsync(Guid userId, string phoneNumber);
+    Task UpdateMfaEnabledAsync(Guid userId, bool enabled);
 }

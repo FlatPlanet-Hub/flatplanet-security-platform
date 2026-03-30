@@ -23,6 +23,7 @@ public class AuthService : IAuthService
     private readonly IDbConnectionFactory _db;
     private readonly ICompanyRepository _companies;
     private readonly IUserContextService _userContext;
+    private readonly IMfaService _mfa;
 
     public AuthService(
         IPasswordHasher passwordHasher,
@@ -36,7 +37,8 @@ public class AuthService : IAuthService
         IRoleRepository roles,
         IDbConnectionFactory db,
         ICompanyRepository companies,
-        IUserContextService userContext)
+        IUserContextService userContext,
+        IMfaService mfa)
     {
         _passwordHasher = passwordHasher;
         _jwt = jwt;
@@ -50,6 +52,7 @@ public class AuthService : IAuthService
         _db = db;
         _companies = companies;
         _userContext = userContext;
+        _mfa = mfa;
     }
 
     public async Task<LoginResponse> LoginAsync(LoginRequest request, string? ipAddress, string? userAgent)
@@ -116,6 +119,13 @@ public class AuthService : IAuthService
             ?? throw new UnauthorizedAccessException("Company not found.");
         if (company.Status != "active")
             throw new ForbiddenException($"Company account is {company.Status}.");
+
+        // MFA gate — if the user has MFA enabled, issue an OTP and defer token issuance
+        if (user.MfaEnabled && !string.IsNullOrEmpty(user.PhoneNumber))
+        {
+            var challenge = await _mfa.SendLoginOtpAsync(user.Id, user.PhoneNumber);
+            return new LoginResponse { RequiresMfa = true, ChallengeId = challenge.Id.ToString() };
+        }
 
         // Session limit check
         var maxSessions = Cfg("max_concurrent_sessions", 3);
