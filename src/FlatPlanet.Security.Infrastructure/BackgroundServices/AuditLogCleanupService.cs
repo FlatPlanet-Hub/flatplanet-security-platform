@@ -25,12 +25,14 @@ public class AuditLogCleanupService : BackgroundService
                 using var scope = _scopeFactory.CreateScope();
                 var config = scope.ServiceProvider.GetRequiredService<ISecurityConfigRepository>();
                 var audit  = scope.ServiceProvider.GetRequiredService<IAdminAuditLogRepository>();
+                var mfa    = scope.ServiceProvider.GetRequiredService<IMfaChallengeRepository>();
 
                 var raw           = await config.GetValueAsync("audit_log_retention_days");
                 var retentionDays = int.TryParse(raw, out var days) ? days : 1095;
 
                 await audit.DeleteExpiredAsync(retentionDays);
-                _logger.LogInformation("Admin audit log cleanup complete. Retention: {Days} days.", retentionDays);
+                await mfa.DeleteExpiredAsync();
+                _logger.LogInformation("Cleanup complete. Audit retention: {Days} days.", retentionDays);
             }
             catch (Exception ex)
             {
