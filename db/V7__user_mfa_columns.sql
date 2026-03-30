@@ -22,8 +22,11 @@ UPDATE users SET password_changed_at = created_at WHERE password_changed_at IS N
 
 -- -----------------------------------------------------------------------------
 -- 3. ISO 27001 A.9.2.2 — every permission grant must have an owner
---    Make role_permissions.granted_by NOT NULL going forward.
---    (Existing NULL rows were already fixed in seed/earlier migrations.)
+--    Delete any orphan rows where granted_by is NULL before enforcing NOT NULL.
+--    These rows have no traceable owner and cannot be attributed; removing them
+--    is the correct remediation for an immutable audit trail.
 -- -----------------------------------------------------------------------------
+DELETE FROM role_permissions WHERE granted_by IS NULL;
+
 ALTER TABLE role_permissions
     ALTER COLUMN granted_by SET NOT NULL;
