@@ -129,4 +129,20 @@ public class UserRepository : IUserRepository
         user.Id = id;
         return user;
     }
+
+    public async Task UpdatePhoneNumberAsync(Guid userId, string phoneNumber)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET phone_number = @PhoneNumber WHERE id = @Id",
+            new { PhoneNumber = phoneNumber, Id = userId });
+    }
+
+    public async Task UpdateMfaEnabledAsync(Guid userId, bool enabled)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET mfa_enabled = @Enabled WHERE id = @Id",
+            new { Enabled = enabled, Id = userId });
+    }
 }

@@ -35,6 +35,7 @@ public class ExceptionHandlingMiddleware
         {
             TooManyRequestsException e => ((HttpStatusCode)429, e.Message),
             AccountLockedException e => ((HttpStatusCode)423, e.Message),
+            ServiceUnavailableException e => ((HttpStatusCode)503, e.Message),
             ForbiddenException e => (HttpStatusCode.Forbidden, e.Message),
             UnauthorizedAccessException e => (HttpStatusCode.Unauthorized, e.Message),
             ArgumentException e => (HttpStatusCode.BadRequest, e.Message),

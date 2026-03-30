@@ -8,9 +8,11 @@ using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
 using FlatPlanet.Security.Infrastructure.BackgroundServices;
+using FlatPlanet.Security.Infrastructure.ExternalServices;
 using FlatPlanet.Security.Infrastructure.Persistence;
 using FlatPlanet.Security.Infrastructure.Repositories;
 using FlatPlanet.Security.Infrastructure.Security;
+using FlatPlanet.Security.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
@@ -28,6 +30,7 @@ var jwtOptions = builder.Configuration.GetSection(JwtOptions.Section).Get<JwtOpt
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.Section));
 builder.Services.Configure<ServiceTokenOptions>(builder.Configuration.GetSection(ServiceTokenOptions.Section));
+builder.Services.Configure<SmsOptions>(builder.Configuration.GetSection(SmsOptions.Section));
 
 // Database
 builder.Services.AddSingleton<IDbConnectionFactory>(
@@ -114,6 +117,7 @@ builder.Services.AddScoped<IResourceTypeRepository, ResourceTypeRepository>();
 builder.Services.AddScoped<IResourceRepository, ResourceRepository>();
 builder.Services.AddScoped<IPermissionRepository, PermissionRepository>();
 builder.Services.AddScoped<IAdminAuditLogRepository, AdminAuditLogRepository>();
+builder.Services.AddScoped<IMfaChallengeRepository, MfaChallengeRepository>();
 
 // Services
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
@@ -133,6 +137,14 @@ builder.Services.AddScoped<IOffboardingService, OffboardingService>();
 builder.Services.AddScoped<IComplianceService, ComplianceService>();
 builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
+builder.Services.AddHttpClient();
+builder.Services.AddScoped<IMfaService, MfaService>();
+builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationServiceStub>();
+if (builder.Environment.IsDevelopment())
+    builder.Services.AddSingleton<ISmsSender, ConsoleSmsSender>();
+else
+    builder.Services.AddSingleton<ISmsSender, TwilioSmsSender>();
+builder.Services.AddMemoryCache();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddHostedService<AuditLogCleanupService>();
 

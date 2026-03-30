@@ -2,10 +2,12 @@ namespace FlatPlanet.Security.Application.DTOs.Auth;
 
 public class LoginResponse
 {
-    public string AccessToken { get; set; } = string.Empty;
-    public string RefreshToken { get; set; } = string.Empty;
-    public int ExpiresIn { get; set; }
-    public UserProfileDto User { get; set; } = new();
+    public bool RequiresMfa { get; set; }
+    public string? ChallengeId { get; set; }
+    public string? AccessToken { get; set; }
+    public string? RefreshToken { get; set; }
+    public int? ExpiresIn { get; set; }
+    public UserProfileDto? User { get; set; }
 }
 
 public class UserProfileDto
