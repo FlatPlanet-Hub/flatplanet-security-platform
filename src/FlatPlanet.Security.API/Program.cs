@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Text;
 using FlatPlanet.Security.API.Authentication;
 using Microsoft.AspNetCore.Authentication;
@@ -138,6 +139,12 @@ builder.Services.AddScoped<IComplianceService, ComplianceService>();
 builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("twilio", (sp, client) =>
+{
+    var opts = sp.GetRequiredService<IOptions<SmsOptions>>().Value;
+    var creds = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{opts.AccountSid}:{opts.AuthToken}"));
+    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", creds);
+});
 builder.Services.AddScoped<IMfaService, MfaService>();
 builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationService>();
 if (builder.Environment.IsDevelopment())

@@ -1,4 +1,5 @@
 using FlatPlanet.Security.Application.DTOs.Admin;
+using FlatPlanet.Security.Application.DTOs.Users;
 
 namespace FlatPlanet.Security.Application.Interfaces.Repositories;
 
@@ -10,7 +11,7 @@ public interface IAdminAuditLogRepository
 
     Task DeleteExpiredAsync(int retentionDays);
 
-    Task<IEnumerable<AdminAuditLogDto>> GetPagedAsync(AdminAuditLogQueryParams query);
+    Task<PagedResult<AdminAuditLogDto>> GetPagedAsync(AdminAuditLogQueryParams query);
 
     Task<AdminAuditLogDetailDto?> GetByIdAsync(Guid id);
 }
