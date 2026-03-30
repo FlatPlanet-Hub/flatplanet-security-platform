@@ -1,5 +1,5 @@
-using System.Security.Claims;
 using FlatPlanet.Security.Application.DTOs.Admin;
+using FlatPlanet.Security.Application.Helpers;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Domain.Entities;
@@ -48,11 +48,11 @@ public class AppService : IAppService
         var created = await _apps.CreateAsync(app);
 
         await _adminAudit.LogAsync(
-            GetActorId(), GetActorEmail(), AdminAction.AppRegister,
+            ActorContext.GetActorId(_httpContext), ActorContext.GetActorEmail(_httpContext), AdminAction.AppRegister,
             "app", created.Id,
             null,
             new { created.Id, created.Name, created.Slug, created.Status },
-            GetIpAddress());
+            ActorContext.GetIpAddress(_httpContext));
 
         return Map(created);
     }
@@ -71,29 +71,14 @@ public class AppService : IAppService
         var action = request.Status == "inactive" ? AdminAction.AppDeactivate : AdminAction.AppUpdate;
 
         await _adminAudit.LogAsync(
-            GetActorId(), GetActorEmail(), action,
+            ActorContext.GetActorId(_httpContext), ActorContext.GetActorEmail(_httpContext), action,
             "app", id,
             before,
             new { app.Name, app.BaseUrl, app.Status },
-            GetIpAddress());
+            ActorContext.GetIpAddress(_httpContext));
 
         return Map(app);
     }
-
-    private Guid GetActorId()
-    {
-        var sub = _httpContext.HttpContext?.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-               ?? _httpContext.HttpContext?.User.FindFirst("sub")?.Value;
-        return Guid.TryParse(sub, out var id) ? id : Guid.Empty;
-    }
-
-    private string GetActorEmail() =>
-        _httpContext.HttpContext?.User.FindFirst(ClaimTypes.Email)?.Value
-        ?? _httpContext.HttpContext?.User.FindFirst("email")?.Value
-        ?? "unknown";
-
-    private string? GetIpAddress() =>
-        _httpContext.HttpContext?.Connection.RemoteIpAddress?.ToString();
 
     private static AppResponse Map(App a) => new()
     {

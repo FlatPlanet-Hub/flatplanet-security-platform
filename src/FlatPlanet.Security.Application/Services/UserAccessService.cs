@@ -1,5 +1,5 @@
-using System.Security.Claims;
 using FlatPlanet.Security.Application.DTOs.Admin;
+using FlatPlanet.Security.Application.Helpers;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Domain.Entities;
@@ -79,11 +79,11 @@ public class UserAccessService : IUserAccessService
         var created = await _userAppRoles.CreateAsync(entry);
 
         await _adminAudit.LogAsync(
-            GetActorId(), GetActorEmail(), AdminAction.RoleGrant,
+            ActorContext.GetActorId(_httpContext), ActorContext.GetActorEmail(_httpContext), AdminAction.RoleGrant,
             "user_app_role", created.Id,
             null,
             new { userId = request.UserId, appId, roleId = request.RoleId, roleName = role.Name },
-            GetIpAddress());
+            ActorContext.GetIpAddress(_httpContext));
 
         return new UserAccessResponse
         {
@@ -114,26 +114,12 @@ public class UserAccessService : IUserAccessService
             await _userAppRoles.UpdateStatusAsync(entry.Id, "revoked");
 
             await _adminAudit.LogAsync(
-                GetActorId(), GetActorEmail(), AdminAction.RoleRevoke,
+                ActorContext.GetActorId(_httpContext), ActorContext.GetActorEmail(_httpContext), AdminAction.RoleRevoke,
                 "user_app_role", entry.Id,
                 new { userId, appId, roleId = entry.RoleId, status = entry.Status },
                 null,
-                GetIpAddress());
+                ActorContext.GetIpAddress(_httpContext));
         }
     }
 
-    private Guid GetActorId()
-    {
-        var sub = _httpContext.HttpContext?.User.FindFirst(ClaimTypes.NameIdentifier)?.Value
-               ?? _httpContext.HttpContext?.User.FindFirst("sub")?.Value;
-        return Guid.TryParse(sub, out var id) ? id : Guid.Empty;
-    }
-
-    private string GetActorEmail() =>
-        _httpContext.HttpContext?.User.FindFirst(ClaimTypes.Email)?.Value
-        ?? _httpContext.HttpContext?.User.FindFirst("email")?.Value
-        ?? "unknown";
-
-    private string? GetIpAddress() =>
-        _httpContext.HttpContext?.Connection.RemoteIpAddress?.ToString();
 }
