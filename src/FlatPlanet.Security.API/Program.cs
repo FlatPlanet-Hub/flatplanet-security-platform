@@ -12,7 +12,6 @@ using FlatPlanet.Security.Infrastructure.ExternalServices;
 using FlatPlanet.Security.Infrastructure.Persistence;
 using FlatPlanet.Security.Infrastructure.Repositories;
 using FlatPlanet.Security.Infrastructure.Security;
-using FlatPlanet.Security.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
@@ -118,6 +117,7 @@ builder.Services.AddScoped<IResourceRepository, ResourceRepository>();
 builder.Services.AddScoped<IPermissionRepository, PermissionRepository>();
 builder.Services.AddScoped<IAdminAuditLogRepository, AdminAuditLogRepository>();
 builder.Services.AddScoped<IMfaChallengeRepository, MfaChallengeRepository>();
+builder.Services.AddScoped<IIdentityVerificationRepository, IdentityVerificationRepository>();
 
 // Services
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
@@ -139,7 +139,7 @@ builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
 builder.Services.AddHttpClient();
 builder.Services.AddScoped<IMfaService, MfaService>();
-builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationServiceStub>();
+builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationService>();
 if (builder.Environment.IsDevelopment())
     builder.Services.AddSingleton<ISmsSender, ConsoleSmsSender>();
 else

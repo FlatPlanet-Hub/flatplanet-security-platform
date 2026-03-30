@@ -1,8 +1,1 @@
-using FlatPlanet.Security.Application.Interfaces.Services;
-
-namespace FlatPlanet.Security.Infrastructure.Services;
-
-public class IdentityVerificationServiceStub : IIdentityVerificationService
-{
-    public Task SyncStatusAsync(Guid userId) => Task.CompletedTask;
-}
+// Stub retained for reference — replaced by IdentityVerificationService in FEAT-06 Program.cs registration.
