@@ -7,6 +7,7 @@ using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
+using FlatPlanet.Security.Infrastructure.BackgroundServices;
 using FlatPlanet.Security.Infrastructure.Persistence;
 using FlatPlanet.Security.Infrastructure.Repositories;
 using FlatPlanet.Security.Infrastructure.Security;
@@ -112,6 +113,7 @@ builder.Services.AddScoped<ICompanyRepository, CompanyRepository>();
 builder.Services.AddScoped<IResourceTypeRepository, ResourceTypeRepository>();
 builder.Services.AddScoped<IResourceRepository, ResourceRepository>();
 builder.Services.AddScoped<IPermissionRepository, PermissionRepository>();
+builder.Services.AddScoped<IAdminAuditLogRepository, AdminAuditLogRepository>();
 
 // Services
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
@@ -131,6 +133,8 @@ builder.Services.AddScoped<IOffboardingService, OffboardingService>();
 builder.Services.AddScoped<IComplianceService, ComplianceService>();
 builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
+builder.Services.AddHttpContextAccessor();
+builder.Services.AddHostedService<AuditLogCleanupService>();
 
 var app = builder.Build();
 
