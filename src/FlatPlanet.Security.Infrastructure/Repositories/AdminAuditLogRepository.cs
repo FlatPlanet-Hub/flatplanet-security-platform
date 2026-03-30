@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Dapper;
 using FlatPlanet.Security.Application.DTOs.Admin;
+using FlatPlanet.Security.Application.DTOs.Users;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using Microsoft.Extensions.Logging;
@@ -61,7 +62,7 @@ public class AdminAuditLogRepository : IAdminAuditLogRepository
             new { RetentionDays = retentionDays });
     }
 
-    public async Task<IEnumerable<AdminAuditLogDto>> GetPagedAsync(AdminAuditLogQueryParams query)
+    public async Task<PagedResult<AdminAuditLogDto>> GetPagedAsync(AdminAuditLogQueryParams query)
     {
         using var conn = await _db.CreateConnectionAsync();
 
@@ -74,25 +75,39 @@ public class AdminAuditLogRepository : IAdminAuditLogRepository
 
         var whereClause = where.Any() ? "WHERE " + string.Join(" AND ", where) : "";
         var offset = (query.Page - 1) * query.PageSize;
+        var parameters = new
+        {
+            query.Action,
+            query.TargetType,
+            query.ActorId,
+            query.From,
+            query.To,
+            Limit  = query.PageSize,
+            Offset = offset
+        };
 
-        return await conn.QueryAsync<AdminAuditLogDto>(
+        using var multi = await conn.QueryMultipleAsync(
             $"""
+            SELECT COUNT(*) FROM admin_audit_log {whereClause};
+
             SELECT id, actor_email, action, target_type, target_id, created_at
             FROM admin_audit_log
             {whereClause}
             ORDER BY created_at DESC
             LIMIT @Limit OFFSET @Offset
             """,
-            new
-            {
-                query.Action,
-                query.TargetType,
-                query.ActorId,
-                query.From,
-                query.To,
-                Limit  = query.PageSize,
-                Offset = offset
-            });
+            parameters);
+
+        var totalCount = await multi.ReadSingleAsync<int>();
+        var items      = await multi.ReadAsync<AdminAuditLogDto>();
+
+        return new PagedResult<AdminAuditLogDto>
+        {
+            Items      = items,
+            TotalCount = totalCount,
+            Page       = query.Page,
+            PageSize   = query.PageSize
+        };
     }
 
     public async Task<AdminAuditLogDetailDto?> GetByIdAsync(Guid id)

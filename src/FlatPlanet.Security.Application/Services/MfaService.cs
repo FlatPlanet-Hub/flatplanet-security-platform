@@ -193,6 +193,17 @@ public class MfaService : IMfaService
         var idleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30);
         var refreshExpiryDays  = Cfg("jwt_refresh_expiry_days", 7);
         var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
+        var maxSessions        = Cfg("max_concurrent_sessions", 3);
+
+        // Enforce the same concurrent-session cap that AuthService applies on non-MFA login.
+        // Without this, MFA users could accumulate unlimited sessions.
+        var activeSessions = await _sessions.CountActiveByUserAsync(user.Id);
+        if (activeSessions >= maxSessions)
+        {
+            var oldest = await _sessions.GetOldestActiveByUserAsync(user.Id);
+            if (oldest is not null)
+                await _sessions.EndSessionAsync(oldest.Id, "replaced");
+        }
 
         Session session;
         string refreshTokenPlain;

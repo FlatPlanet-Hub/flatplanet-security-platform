@@ -1,5 +1,3 @@
-using System.Net.Http.Headers;
-using System.Text;
 using FlatPlanet.Security.Application.Common.Options;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.Extensions.Options;
@@ -19,11 +17,8 @@ public class TwilioSmsSender : ISmsSender
 
     public async Task SendAsync(string to, string body)
     {
-        var client = _httpClientFactory.CreateClient();
+        var client = _httpClientFactory.CreateClient("twilio");
         var url = $"https://api.twilio.com/2010-04-01/Accounts/{_options.AccountSid}/Messages.json";
-
-        var credentials = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{_options.AccountSid}:{_options.AuthToken}"));
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", credentials);
 
         var formContent = new FormUrlEncodedContent(new[]
         {
