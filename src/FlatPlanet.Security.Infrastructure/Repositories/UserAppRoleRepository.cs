@@ -43,9 +43,8 @@ public class UserAppRoleRepository : IUserAppRoleRepository
             """
             INSERT INTO user_app_roles (user_id, app_id, role_id, granted_by, expires_at, status)
             VALUES (@UserId, @AppId, @RoleId, @GrantedBy, @ExpiresAt, 'active')
-            ON CONFLICT (app_id, user_id)
+            ON CONFLICT (user_id, app_id, role_id)
             DO UPDATE SET
-                role_id    = EXCLUDED.role_id,
                 granted_by = EXCLUDED.granted_by,
                 expires_at = EXCLUDED.expires_at,
                 status     = 'active'
