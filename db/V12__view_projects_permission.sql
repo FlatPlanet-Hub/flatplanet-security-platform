@@ -1,5 +1,5 @@
 -- =============================================================================
--- FlatPlanet Security Platform — V3: Add view_projects permission
+-- FlatPlanet Security Platform — V12: Add view_projects permission
 -- Adds the view_projects permission to dashboard-hub and grants it to all
 -- dashboard-hub roles and to the platform_owner role.
 -- =============================================================================
