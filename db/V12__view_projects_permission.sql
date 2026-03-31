@@ -12,8 +12,8 @@ WHERE a.slug = 'dashboard-hub'
 ON CONFLICT DO NOTHING;
 
 -- Grant to all app-scoped roles within dashboard-hub
-INSERT INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id
+INSERT INTO role_permissions (role_id, permission_id, granted_by)
+SELECT r.id, p.id, '00000000-0000-0000-0000-000000000001'
 FROM roles r
 JOIN apps a ON r.app_id = a.id
 JOIN permissions p ON p.app_id = a.id
@@ -22,8 +22,8 @@ WHERE a.slug = 'dashboard-hub'
 ON CONFLICT (role_id, permission_id) DO NOTHING;
 
 -- Grant to platform_owner role so it applies when platform_owner is assigned to dashboard-hub
-INSERT INTO role_permissions (role_id, permission_id)
-SELECT r.id, p.id
+INSERT INTO role_permissions (role_id, permission_id, granted_by)
+SELECT r.id, p.id, '00000000-0000-0000-0000-000000000001'
 FROM roles r
 JOIN apps a ON a.slug = 'dashboard-hub'
 JOIN permissions p ON p.app_id = a.id
