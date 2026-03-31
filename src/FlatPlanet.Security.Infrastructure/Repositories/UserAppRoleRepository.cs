@@ -41,8 +41,13 @@ public class UserAppRoleRepository : IUserAppRoleRepository
         using var conn = await _db.CreateConnectionAsync();
         var id = await conn.QuerySingleAsync<Guid>(
             """
-            INSERT INTO user_app_roles (user_id, app_id, role_id, granted_by, expires_at)
-            VALUES (@UserId, @AppId, @RoleId, @GrantedBy, @ExpiresAt)
+            INSERT INTO user_app_roles (user_id, app_id, role_id, granted_by, expires_at, status)
+            VALUES (@UserId, @AppId, @RoleId, @GrantedBy, @ExpiresAt, 'active')
+            ON CONFLICT (user_id, app_id, role_id)
+            DO UPDATE SET
+                granted_by = EXCLUDED.granted_by,
+                expires_at = EXCLUDED.expires_at,
+                status     = 'active'
             RETURNING id
             """, userAppRole);
         userAppRole.Id = id;
