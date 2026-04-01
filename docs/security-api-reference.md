@@ -1,6 +1,6 @@
 # FlatPlanet Security Platform — API Reference
 
-**Version**: 1.2.1
+**Version**: 1.2.2
 **Base URL**: `https://<your-host>/api/v1`
 **Content-Type**: `application/json`
 **Auth**: Bearer JWT or Service Token in `Authorization` header
@@ -1323,6 +1323,11 @@ Returns the created `UserAccessResponse`:
     "expiresAt": "2026-12-31T23:59:59Z"
   }
 }
+```
+
+#### Notes
+
+- If the user was previously granted access to this app and that grant was later revoked, calling this endpoint reactivates the existing record. It does **not** return `409`.
 
 ---
 
