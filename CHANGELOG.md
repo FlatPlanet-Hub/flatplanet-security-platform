@@ -4,6 +4,21 @@ All notable changes to the FlatPlanet Security Platform are documented here.
 
 ---
 
+## [1.2.2] — 2026-04-01
+
+DB constraint fixes and permission seeding for dashboard-hub.
+
+---
+
+### Fixes
+
+- **Fix: re-grant upsert (BUG-01)** — `POST /api/v1/apps/{appId}/users` now upserts instead of plain INSERT; re-granting a previously revoked user reactivates the existing row instead of returning `409` (PR #29)
+- **DB: V11 migration** — drops `granted_by` FK constraint and NOT NULL on `user_app_roles`; `UserAppRole.GrantedBy` updated to `Guid?`; service-token callers (sentinel GUID) no longer require a matching users row (PR #30)
+- **DB: V12 migration** — seeds `view_projects` permission for `dashboard-hub`; grants to all dashboard-hub app roles and to `platform_owner` platform role; idempotent via `ON CONFLICT DO NOTHING` (PR #31)
+- **DB: V13 migration** — drops `granted_by` FK constraint and NOT NULL on `role_permissions` (mirrors V11); re-runs V12 role_permissions grants which had failed due to the NOT NULL constraint (PR #33)
+
+---
+
 ## [1.2.1] — 2026-03-27
 
 Validation envelope fix, ServiceToken registration, and seed data cleanup.

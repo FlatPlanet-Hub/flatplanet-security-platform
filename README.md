@@ -33,6 +33,9 @@ db/
   V4__session_idle_timeout.sql
   V5__standalone_auth.sql
   V6__remove_registered_by_fk.sql
+  V11__drop_granted_by_fk.sql
+  V12__view_projects_permission.sql
+  V13__role_permissions_fk_drop.sql
   seed_test_data.sql
 docs/
   api-reference.md                  # Complete endpoint + payload reference
@@ -98,6 +101,9 @@ db/V3__rls_fixes.sql
 db/V4__session_idle_timeout.sql
 db/V5__standalone_auth.sql
 db/V6__remove_registered_by_fk.sql
+db/V11__drop_granted_by_fk.sql
+db/V12__view_projects_permission.sql
+db/V13__role_permissions_fk_drop.sql
 ```
 
 Optionally seed test data:
