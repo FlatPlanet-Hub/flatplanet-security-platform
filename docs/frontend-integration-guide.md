@@ -448,16 +448,85 @@ After a project is created (or whenever the developer needs to refresh their loc
 
 **Frontend implementation:**
 
-1. Call the workspace endpoint after project creation (or on demand from a "Refresh Workspace" button)
-2. Write the returned `content` to a file named `CLAUDE-local.md` in the developer's local project folder
-3. **Never upload or store this file** — it contains a live API token
-4. Show the `gitignoreEntry` value (`CLAUDE-local.md`) and remind the developer to add it to `.gitignore` if not already present
+1. Call the workspace endpoint after project creation (or on demand from a "Download Workspace File" button)
+2. Save the returned `content` to the developer's local machine as `CLAUDE-local.md` (see saving options below)
+3. **Never upload or store this file server-side** — it contains a live API token
+4. Show the `gitignoreEntry` value and remind the developer to add `CLAUDE-local.md` to `.gitignore`
 5. Show `expiresAt` so the developer knows when to regenerate
 
 **Smart token behaviour:**
 - If the project already has an active token, it is **revoked** before a new one is issued
 - Safe to call on every workspace refresh — no token accumulation
 - To force-regenerate: `POST /api/projects/{id}/claude-config/regenerate`
+
+---
+
+### How to save CLAUDE-local.md to the developer's machine
+
+Browsers cannot write to arbitrary folders without user interaction. Use **Option B** as primary with **Option A** as fallback.
+
+#### Option B — File System Access API (recommended, Chrome/Edge only)
+
+Opens the native OS save dialog so the developer can navigate directly to their project folder and save the file there.
+
+```js
+async function saveWorkspaceFile(content) {
+  try {
+    const fileHandle = await window.showSaveFilePicker({
+      suggestedName: 'CLAUDE-local.md',
+      types: [{ description: 'Markdown', accept: { 'text/markdown': ['.md'] } }],
+    });
+    const writable = await fileHandle.createWritable();
+    await writable.write(content);
+    await writable.close();
+  } catch (err) {
+    if (err.name !== 'AbortError') throw err; // user cancelled — do nothing
+  }
+}
+```
+
+> Requires HTTPS (Netlify ✅). Not supported in Firefox or Safari — fall back to Option A for those.
+
+#### Option A — Browser download (fallback, all browsers)
+
+Triggers a standard browser download. File lands in the user's **Downloads folder** — they must move it to their project root manually.
+
+```js
+function downloadWorkspaceFile(content) {
+  const blob = new Blob([content], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'CLAUDE-local.md';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+```
+
+#### Combined implementation (B with A as fallback)
+
+```js
+async function handleDownloadWorkspace(projectId) {
+  const res = await fetch(
+    `${HUBAPI_BASE_URL}/api/projects/${projectId}/claude-config/workspace`,
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
+  const { data } = await res.json();
+
+  if ('showSaveFilePicker' in window) {
+    await saveWorkspaceFile(data.content);   // Option B — native save dialog
+  } else {
+    downloadWorkspaceFile(data.content);     // Option A — Downloads folder fallback
+  }
+}
+```
+
+**Recommended UI:**
+- Button label: **"Download Workspace File"**
+- After save: show a reminder banner:
+  > `CLAUDE-local.md` saved. Make sure `CLAUDE-local.md` is in your project's `.gitignore`. Token expires **{expiresAt}**.
+
+---
 
 | HTTP | Meaning |
 |---|---|
