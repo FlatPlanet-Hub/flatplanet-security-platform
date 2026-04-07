@@ -32,8 +32,24 @@ builder.Services.Configure<ServiceTokenOptions>(builder.Configuration.GetSection
 builder.Services.AddSingleton<IDbConnectionFactory>(
     new NpgsqlConnectionFactory(dbOptions.BuildConnectionString()));
 
-// CORS
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+// CORS — load origins from registered apps + appsettings fallback
+var configOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+var dbOrigins = Array.Empty<string>();
+try
+{
+    await using var tempConn = new Npgsql.NpgsqlConnection(dbOptions.BuildConnectionString());
+    dbOrigins = (await Dapper.SqlMapper.QueryAsync<string>(
+        tempConn,
+        "SELECT DISTINCT base_url FROM apps WHERE status = 'active' AND base_url IS NOT NULL AND base_url <> ''"))
+        .ToArray();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[CORS] Could not load origins from DB, using config only: {ex.Message}");
+}
+
+var allowedOrigins = configOrigins.Union(dbOrigins).ToArray();
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
