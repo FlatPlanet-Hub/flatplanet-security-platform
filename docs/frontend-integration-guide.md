@@ -1,8 +1,8 @@
 # FlatPlanet — Frontend Integration Guide
 
 **Audience:** Frontend developers
-**Last updated:** 2026-04-06
-**Verified against:** Security Platform v1.2.2 · Platform API (HubApi) v1.0.0
+**Last updated:** 2026-04-07
+**Verified against:** Security Platform v1.2.2 · Platform API (HubApi) v1.0.1
 **Tested by:** Integration tester (Claude Code)
 
 ---
@@ -10,6 +10,15 @@
 ## What's New in This Version
 
 > These are verified changes from integration testing — update your frontend accordingly.
+
+### Platform API v1.0.1 (2026-04-07)
+
+| # | Change | Impact |
+|---|---|---|
+| 1 | Parameterized `@param` query binding fixed (BUG-1) | `POST /api/projects/{id}/query/read` and `/write` with `parameters` payload now work correctly for all types |
+| 2 | `AlterOperationType` string enum fix (BUG-2) | `PUT /api/projects/{id}/migration/alter-table` now accepts camelCase string values (e.g. `"addColumn"`) without error |
+| 3 | Schema names with digit-first suffix now accepted | Projects whose `schemaName` starts with a digit after `project_` (e.g. `project_03557ada`) no longer rejected |
+| 4 | `CLAUDE-local.md` template improvements | Generated workspace file now includes session startup, project management, and SP sections by default |
 
 ### Platform API v1.0.0 (2026-04-06)
 
