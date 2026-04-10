@@ -1,6 +1,9 @@
 # Build outputs
 bin/
 obj/
+publish/
+publish_sp/
+publish_sp.zip
 
 # User-specific files
 *.user
