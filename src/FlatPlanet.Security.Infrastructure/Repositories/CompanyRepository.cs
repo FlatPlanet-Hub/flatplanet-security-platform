@@ -29,8 +29,8 @@ public class CompanyRepository : ICompanyRepository
         using var conn = await _db.CreateConnectionAsync();
         var id = await conn.QuerySingleAsync<Guid>(
             """
-            INSERT INTO companies (name, country_code, status)
-            VALUES (@Name, @CountryCode, @Status)
+            INSERT INTO companies (name, country_code, status, code)
+            VALUES (@Name, @CountryCode, @Status, @Code)
             RETURNING id
             """, company);
         company.Id = id;
@@ -41,7 +41,7 @@ public class CompanyRepository : ICompanyRepository
     {
         using var conn = await _db.CreateConnectionAsync();
         await conn.ExecuteAsync(
-            "UPDATE companies SET name = @Name, country_code = @CountryCode WHERE id = @Id", company);
+            "UPDATE companies SET name = @Name, country_code = @CountryCode, code = @Code WHERE id = @Id", company);
     }
 
     public async Task UpdateStatusAsync(Guid id, string status)

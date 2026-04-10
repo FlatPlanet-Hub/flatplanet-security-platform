@@ -82,7 +82,7 @@ public class AuthServiceTests
         _sessions.Setup(s => s.CreateAsync(It.IsAny<Session>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
             .ReturnsAsync((Session s, IDbConnection _, IDbTransaction _) => { s.Id = sessionId; return s; });
 
-        _jwt.Setup(j => j.IssueAccessToken(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).Returns("access.token.here");
+        _jwt.Setup(j => j.IssueAccessTokenAsync(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).ReturnsAsync("access.token.here");
         _jwt.Setup(j => j.GenerateRefreshToken()).Returns(("plain-token", "hashed-token"));
         _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
             .ReturnsAsync((RefreshToken t, IDbConnection _, IDbTransaction _) => t);
@@ -283,7 +283,7 @@ public class AuthServiceTests
         _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>()))
             .ReturnsAsync((RefreshToken t) => t);
         _roles.Setup(r => r.GetPlatformRoleNamesForUserAsync(userId)).ReturnsAsync(new List<string>());
-        _jwt.Setup(j => j.IssueAccessToken(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).Returns("new-access-token");
+        _jwt.Setup(j => j.IssueAccessTokenAsync(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).ReturnsAsync("new-access-token");
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
         var service = CreateService();

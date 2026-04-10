@@ -4,7 +4,7 @@ namespace FlatPlanet.Security.Application.Interfaces.Services;
 
 public interface IJwtService
 {
-    string IssueAccessToken(User user, Guid sessionId, IEnumerable<string> roles);
+    Task<string> IssueAccessTokenAsync(User user, Guid sessionId, IEnumerable<string> roles);
     (string token, string hash) GenerateRefreshToken();
     string HashToken(string token);
 }

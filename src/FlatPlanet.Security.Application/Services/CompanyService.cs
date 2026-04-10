@@ -48,7 +48,8 @@ public class CompanyService : ICompanyService
         {
             Name = request.Name,
             CountryCode = request.CountryCode,
-            Status = "active"
+            Status = "active",
+            Code = request.Code
         };
         var created = await _companies.CreateAsync(company);
         return Map(created);
@@ -60,6 +61,7 @@ public class CompanyService : ICompanyService
             ?? throw new KeyNotFoundException("Company not found.");
         company.Name = request.Name;
         company.CountryCode = request.CountryCode;
+        company.Code = request.Code;
         await _companies.UpdateAsync(company);
         return Map(company);
     }
@@ -106,6 +108,7 @@ public class CompanyService : ICompanyService
         Name = c.Name,
         CountryCode = c.CountryCode,
         Status = c.Status,
+        Code = c.Code,
         CreatedAt = c.CreatedAt
     };
 }
