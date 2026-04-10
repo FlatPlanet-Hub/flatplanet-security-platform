@@ -14,4 +14,8 @@ public class UserBusinessMembership
     // Joined from companies table
     public string? BusinessCode { get; init; }
     public string? BusinessName { get; init; }
+
+    // Joined from users table
+    public string? Email { get; init; }
+    public string? FullName { get; init; }
 }

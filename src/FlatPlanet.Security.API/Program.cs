@@ -148,6 +148,7 @@ builder.Services.AddScoped<IOffboardingService, OffboardingService>();
 builder.Services.AddScoped<IComplianceService, ComplianceService>();
 builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
+builder.Services.AddScoped<IBusinessMembershipService, BusinessMembershipService>();
 
 var app = builder.Build();
 
