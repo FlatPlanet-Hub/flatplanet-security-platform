@@ -4,6 +4,33 @@ All notable changes to the FlatPlanet Security Platform are documented here.
 
 ---
 
+## [1.3.0] — 2026-04-10
+
+Multi-business membership support and JWT `business_codes` claim.
+
+---
+
+### Added
+
+- **FEAT-SP-BIZ-01 — Multi-business membership** — Users can belong to multiple companies simultaneously via the new `user_business_memberships` table. Membership records carry a `role` and `status` field.
+- **`companies.code` column** — new short identifier column (e.g. `"fp"`) on the `companies` table; returned on `GET /api/v1/companies/{id}` and accepted on `POST` / `PUT /api/v1/companies/{id}`.
+- **`business_codes` JWT claim** — access tokens now include a `business_codes` array claim listing all company codes the user is an active member of (e.g. `["fp"]`). Downstream services can use this claim for tenant routing without an additional API call.
+- **DB migration V14** — creates `user_business_memberships` table; adds `code` column to `companies`.
+
+### New Endpoints
+
+- **`GET /api/v1/companies/{companyId}/members`** — list all members of a company (requires `PlatformOwner` role).
+- **`POST /api/v1/companies/{companyId}/members`** — add a user to a company with a specified role (requires `PlatformOwner` role). Body: `{ userId, role }`.
+- **`DELETE /api/v1/companies/{companyId}/members/{userId}`** — remove a user from a company (requires `PlatformOwner` role).
+
+### Changed
+
+- **`GET /api/v1/companies/{id}`** — response now includes `code` field.
+- **`POST /api/v1/companies`** — now accepts optional `code` field.
+- **`PUT /api/v1/companies/{id}`** — now accepts optional `code` field.
+
+---
+
 ## [1.2.2] — 2026-04-01
 
 DB constraint fixes and permission seeding for dashboard-hub.

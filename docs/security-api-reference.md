@@ -1,6 +1,6 @@
 # FlatPlanet Security Platform — API Reference
 
-**Version**: 1.2.2
+**Version**: 1.3.0
 **Base URL**: `https://<your-host>/api/v1`
 **Content-Type**: `application/json`
 **Auth**: Bearer JWT or Service Token in `Authorization` header
@@ -708,6 +708,7 @@ Returns all companies.
     {
       "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
       "name": "Acme Corp",
+      "code": "fp",
       "countryCode": "US",
       "status": "active",
       "createdAt": "2026-01-01T00:00:00Z"
@@ -723,6 +724,22 @@ Returns all companies.
 Returns a single company by ID.
 
 **Auth required**: Yes — `PlatformOwner`
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "name": "Acme Corp",
+    "code": "fp",
+    "countryCode": "US",
+    "status": "active",
+    "createdAt": "2026-01-01T00:00:00Z"
+  }
+}
+```
 
 #### Error Responses
 
@@ -743,7 +760,8 @@ Creates a new company. Default status is `active`.
 ```json
 {
   "name": "Acme Corp",
-  "countryCode": "US"
+  "countryCode": "US",
+  "code": "fp"
 }
 ```
 
@@ -753,6 +771,7 @@ Creates a new company. Default status is `active`.
 |---|---|---|---|
 | `name` | string | Yes | Max 200 chars. Must be unique. |
 | `countryCode` | string | Yes | ISO country code (e.g. `US`, `GB`, `PH`). Max 10 chars. |
+| `code` | string | No | Short business identifier (e.g. `"fp"`). Used in JWT `business_codes` claim and file storage paths. |
 
 #### Success Response — 201
 
@@ -768,7 +787,7 @@ Returns the created `CompanyResponse`.
 
 ### PUT /api/v1/companies/{id}
 
-Updates a company's name and country code.
+Updates a company's name, country code, and optional code.
 
 **Auth required**: Yes — `PlatformOwner`
 
@@ -777,9 +796,18 @@ Updates a company's name and country code.
 ```json
 {
   "name": "Acme International",
-  "countryCode": "GB"
+  "countryCode": "GB",
+  "code": "fp"
 }
 ```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | Yes | Max 200 chars. Must be unique. |
+| `countryCode` | string | Yes | ISO country code. Max 10 chars. |
+| `code` | string | No | Short business identifier. |
 
 #### Success Response — 200
 
@@ -790,6 +818,106 @@ Returns the updated `CompanyResponse`.
 | HTTP | Message | Cause |
 |---|---|---|
 | `404` | Company not found. | No company with that ID. |
+
+---
+
+### GET /api/v1/companies/{companyId}/members
+
+Returns all members of a company.
+
+**Auth required**: Yes — `PlatformOwner`
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "userId": "dc88786a-...",
+      "email": "chris.moriarty@flatplanet.com",
+      "fullName": "Chris Moriarty",
+      "role": "member",
+      "status": "active",
+      "joinedAt": "2026-04-10T00:07:38Z"
+    }
+  ]
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `userId` | UUID | Security Platform user ID. |
+| `email` | string | User's email address. |
+| `fullName` | string | User's display name. |
+| `role` | string | Membership role (e.g. `"member"`, `"admin"`). |
+| `status` | string | Membership status — `active` or `inactive`. |
+| `joinedAt` | string | ISO 8601 timestamp when the membership was created. |
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `404` | Company not found. | No company with that ID. |
+
+---
+
+### POST /api/v1/companies/{companyId}/members
+
+Adds a user to a company.
+
+**Auth required**: Yes — `PlatformOwner`
+
+#### Request
+
+```json
+{
+  "userId": "dc88786a-...",
+  "role": "member"
+}
+```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `userId` | UUID | Yes | ID of the user to add. |
+| `role` | string | Yes | Membership role to assign (e.g. `"member"`, `"admin"`). |
+
+#### Success Response — 200
+
+```json
+{ "success": true, "message": "Member added." }
+```
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `404` | Company not found. | No company with that ID. |
+| `404` | User not found. | No user with that ID. |
+| `409` | — | User is already a member of this company. |
+
+---
+
+### DELETE /api/v1/companies/{companyId}/members/{userId}
+
+Removes a user from a company.
+
+**Auth required**: Yes — `PlatformOwner`
+
+#### Success Response — 200
+
+```json
+{ "success": true, "message": "Member removed." }
+```
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `404` | Company not found. | No company with that ID. |
+| `404` | Member not found. | User is not a member of this company. |
 
 ---
 
