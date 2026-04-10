@@ -35,10 +35,8 @@ BEGIN
     -- 5. Nullify app_id in sessions (keep session records, just unlink)
     UPDATE sessions SET app_id = NULL WHERE app_id = ANY(test_app_ids);
 
-    -- 6. Nullify app_id in audit_logs if column exists
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'audit_logs' AND column_name = 'app_id') THEN
-        UPDATE audit_logs SET app_id = NULL WHERE app_id = ANY(test_app_ids);
-    END IF;
+    -- 6. Nullify app_id in auth_audit_log
+    UPDATE auth_audit_log SET app_id = NULL WHERE app_id = ANY(test_app_ids);
 
     -- 7. Delete the apps themselves
     DELETE FROM apps WHERE id = ANY(test_app_ids);
