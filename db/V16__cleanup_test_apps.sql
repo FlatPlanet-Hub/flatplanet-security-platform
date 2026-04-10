@@ -18,8 +18,8 @@ BEGIN
     -- Collect role IDs for those apps
     SELECT ARRAY_AGG(id) INTO test_role_ids FROM roles WHERE app_id = ANY(test_app_ids);
 
-    -- 1. Delete user_app_access for these apps
-    DELETE FROM user_app_access WHERE app_id = ANY(test_app_ids);
+    -- 1. Delete user_app_roles for these apps
+    DELETE FROM user_app_roles WHERE app_id = ANY(test_app_ids);
 
     -- 2. Delete role_permissions for roles in these apps
     IF test_role_ids IS NOT NULL AND array_length(test_role_ids, 1) > 0 THEN
