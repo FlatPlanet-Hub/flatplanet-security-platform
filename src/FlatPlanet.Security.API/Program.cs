@@ -128,6 +128,7 @@ builder.Services.AddScoped<ICompanyRepository, CompanyRepository>();
 builder.Services.AddScoped<IResourceTypeRepository, ResourceTypeRepository>();
 builder.Services.AddScoped<IResourceRepository, ResourceRepository>();
 builder.Services.AddScoped<IPermissionRepository, PermissionRepository>();
+builder.Services.AddScoped<IBusinessMembershipRepository, BusinessMembershipRepository>();
 
 // Services
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
@@ -147,6 +148,7 @@ builder.Services.AddScoped<IOffboardingService, OffboardingService>();
 builder.Services.AddScoped<IComplianceService, ComplianceService>();
 builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
+builder.Services.AddScoped<IBusinessMembershipService, BusinessMembershipService>();
 
 var app = builder.Build();
 

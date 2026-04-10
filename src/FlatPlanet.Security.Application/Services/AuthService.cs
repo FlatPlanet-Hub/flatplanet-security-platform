@@ -170,7 +170,7 @@ public class AuthService : IAuthService
         }
 
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
-        var accessToken = _jwt.IssueAccessToken(user, session.Id, platformRoles);
+        var accessToken = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
         var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
 
         // Fire all post-login side-effects in parallel
@@ -265,7 +265,7 @@ public class AuthService : IAuthService
 
         var sessionId = stored.SessionId ?? Guid.Empty;
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
-        var accessToken = _jwt.IssueAccessToken(user, sessionId, platformRoles);
+        var accessToken = await _jwt.IssueAccessTokenAsync(user, sessionId, platformRoles);
         var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
 
         await _auditLog.LogAsync(new AuthAuditLog
