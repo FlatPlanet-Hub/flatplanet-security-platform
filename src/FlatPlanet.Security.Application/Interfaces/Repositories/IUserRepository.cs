@@ -1,3 +1,4 @@
+using System.Data;
 using FlatPlanet.Security.Application.DTOs.Users;
 using FlatPlanet.Security.Domain.Entities;
 
@@ -15,4 +16,6 @@ public interface IUserRepository
     Task UpdateStatusAsync(Guid userId, string status);
     Task SuspendByCompanyIdAsync(Guid companyId);
     Task<User> CreateAsync(User user);
+    Task UpdatePasswordHashAsync(Guid userId, string passwordHash);
+    Task UpdatePasswordHashAsync(Guid userId, string passwordHash, System.Data.IDbConnection conn, System.Data.IDbTransaction tx);
 }

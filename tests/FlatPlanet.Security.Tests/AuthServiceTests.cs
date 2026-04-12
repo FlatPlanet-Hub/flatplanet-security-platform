@@ -1,11 +1,14 @@
 using System.Data;
 using FlatPlanet.Security.Application.Common.Exceptions;
+using FlatPlanet.Security.Application.Common.Options;
 using FlatPlanet.Security.Application.DTOs.Auth;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
 using FlatPlanet.Security.Domain.Entities;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace FlatPlanet.Security.Tests;
@@ -26,12 +29,17 @@ public class AuthServiceTests
     private readonly Mock<IDbTransaction> _tx = new();
     private readonly Mock<ICompanyRepository> _companies = new();
     private readonly Mock<IUserContextService> _userContext = new();
+    private readonly Mock<IPasswordResetTokenRepository> _resetTokens = new();
+    private readonly Mock<IEmailService> _emailService = new();
+    private readonly IOptions<AppOptions> _appOptions = Options.Create(new AppOptions { BaseUrl = "https://test.example.com" });
+    private readonly Mock<ILogger<AuthService>> _logger = new();
 
     private AuthService CreateService() => new(
         _passwordHasher.Object, _jwt.Object, _users.Object,
         _sessions.Object, _refreshTokens.Object,
         _loginAttempts.Object, _auditLog.Object, _securityConfig.Object,
-        _roles.Object, _db.Object, _companies.Object, _userContext.Object);
+        _roles.Object, _db.Object, _companies.Object, _userContext.Object,
+        _resetTokens.Object, _emailService.Object, _appOptions, _logger.Object);
 
     private void SetupDefaultConfig()
     {

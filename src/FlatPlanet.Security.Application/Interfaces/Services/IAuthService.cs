@@ -8,4 +8,7 @@ public interface IAuthService
     Task LogoutAsync(Guid? sessionId, Guid userId, string? ipAddress);
     Task<RefreshResponse> RefreshAsync(RefreshRequest request, string? ipAddress);
     Task<UserProfileResponse> GetProfileAsync(Guid userId, string? appSlug);
+    Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request, string? ipAddress);
+    Task ForgotPasswordAsync(ForgotPasswordRequest request);
+    Task ResetPasswordAsync(ResetPasswordRequest request, string? ipAddress);
 }

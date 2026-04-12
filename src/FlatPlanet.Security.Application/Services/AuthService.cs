@@ -1,11 +1,15 @@
 using System.Text.Json;
 using FlatPlanet.Security.Application.Common.Exceptions;
+using FlatPlanet.Security.Application.Common.Helpers;
+using FlatPlanet.Security.Application.Common.Options;
 using FlatPlanet.Security.Application.DTOs.Auth;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Domain.Entities;
 using FlatPlanet.Security.Domain.Enums;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace FlatPlanet.Security.Application.Services;
 
@@ -23,6 +27,10 @@ public class AuthService : IAuthService
     private readonly IDbConnectionFactory _db;
     private readonly ICompanyRepository _companies;
     private readonly IUserContextService _userContext;
+    private readonly IPasswordResetTokenRepository _resetTokens;
+    private readonly IEmailService _emailService;
+    private readonly IOptions<AppOptions> _appOptions;
+    private readonly ILogger<AuthService> _logger;
 
     public AuthService(
         IPasswordHasher passwordHasher,
@@ -36,7 +44,11 @@ public class AuthService : IAuthService
         IRoleRepository roles,
         IDbConnectionFactory db,
         ICompanyRepository companies,
-        IUserContextService userContext)
+        IUserContextService userContext,
+        IPasswordResetTokenRepository resetTokens,
+        IEmailService emailService,
+        IOptions<AppOptions> appOptions,
+        ILogger<AuthService> logger)
     {
         _passwordHasher = passwordHasher;
         _jwt = jwt;
@@ -50,6 +62,10 @@ public class AuthService : IAuthService
         _db = db;
         _companies = companies;
         _userContext = userContext;
+        _resetTokens = resetTokens;
+        _emailService = emailService;
+        _appOptions = appOptions;
+        _logger = logger;
     }
 
     public async Task<LoginResponse> LoginAsync(LoginRequest request, string? ipAddress, string? userAgent)
@@ -317,6 +333,122 @@ public class AuthService : IAuthService
             PlatformRoles = platformRoles,
             AppAccess = appAccess
         };
+    }
+
+    public async Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request, string? ipAddress)
+    {
+        var user = await _users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        if (!_passwordHasher.Verify(request.CurrentPassword, user.PasswordHash))
+            throw new UnauthorizedAccessException("Current password is incorrect.");
+
+        if (request.NewPassword != request.ConfirmPassword)
+            throw new ArgumentException("Passwords do not match.");
+
+        var (isValid, errorMessage) = PasswordPolicyValidator.Validate(request.NewPassword);
+        if (!isValid)
+            throw new ArgumentException(errorMessage);
+
+        if (_passwordHasher.Verify(request.NewPassword, user.PasswordHash))
+            throw new ArgumentException("New password must be different from the current password.");
+
+        var newHash = _passwordHasher.Hash(request.NewPassword);
+        await _users.UpdatePasswordHashAsync(userId, newHash);
+
+        await Task.WhenAll(
+            _sessions.EndAllActiveSessionsByUserAsync(userId, "password_changed"),
+            _refreshTokens.RevokeAllByUserAsync(userId, "password_changed")
+        );
+
+        await _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId = userId,
+            EventType = AuditEventType.PasswordChanged,
+            IpAddress = ipAddress
+        });
+    }
+
+    public async Task ForgotPasswordAsync(ForgotPasswordRequest request)
+    {
+        var user = await _users.GetByEmailAsync(request.Email);
+        if (user is null)
+            return;
+
+        var plain = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(plain))).ToLowerInvariant();
+
+        await _resetTokens.InvalidatePendingByUserAsync(user.Id);
+        await _resetTokens.CreateAsync(new PasswordResetToken
+        {
+            UserId = user.Id,
+            TokenHash = hash,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(15)
+        });
+
+        var link = $"{_appOptions.Value.BaseUrl}/reset-password?token={plain}";
+
+        try
+        {
+            await _emailService.SendPasswordResetEmailAsync(user.Email, link);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to send password reset email to {Email}", user.Email);
+        }
+
+        await _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId = user.Id,
+            EventType = AuditEventType.PasswordResetRequested
+        });
+    }
+
+    public async Task ResetPasswordAsync(ResetPasswordRequest request, string? ipAddress)
+    {
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(request.Token))).ToLowerInvariant();
+
+        var token = await _resetTokens.GetValidByTokenHashAsync(hash)
+            ?? throw new ArgumentException("Reset token is invalid or has expired.");
+
+        if (request.NewPassword != request.ConfirmPassword)
+            throw new ArgumentException("Passwords do not match.");
+
+        var (isValid, errorMessage) = PasswordPolicyValidator.Validate(request.NewPassword);
+        if (!isValid)
+            throw new ArgumentException(errorMessage);
+
+        await _users.GetByIdAsync(token.UserId);
+
+        var newHash = _passwordHasher.Hash(request.NewPassword);
+
+        using (var conn = await _db.CreateConnectionAsync())
+        using (var tx = conn.BeginTransaction())
+        {
+            try
+            {
+                await _resetTokens.MarkAsUsedAsync(token.Id, conn, tx);
+                await _users.UpdatePasswordHashAsync(token.UserId, newHash, conn, tx);
+                tx.Commit();
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+        }
+
+        await Task.WhenAll(
+            _sessions.EndAllActiveSessionsByUserAsync(token.UserId, "password_reset"),
+            _refreshTokens.RevokeAllByUserAsync(token.UserId, "password_reset")
+        );
+
+        await _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId = token.UserId,
+            EventType = AuditEventType.PasswordResetCompleted,
+            IpAddress = ipAddress
+        });
     }
 
     private async Task<Dictionary<string, string>> LoadConfigAsync()
