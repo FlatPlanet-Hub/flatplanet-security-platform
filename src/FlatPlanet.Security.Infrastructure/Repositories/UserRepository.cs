@@ -1,3 +1,4 @@
+using System.Data;
 using Dapper;
 using FlatPlanet.Security.Application.DTOs.Users;
 using FlatPlanet.Security.Application.Interfaces;
@@ -128,5 +129,21 @@ public class UserRepository : IUserRepository
             user);
         user.Id = id;
         return user;
+    }
+
+    public async Task UpdatePasswordHashAsync(Guid userId, string passwordHash)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET password_hash = @password_hash WHERE id = @id::uuid",
+            new { password_hash = passwordHash, id = userId });
+    }
+
+    public async Task UpdatePasswordHashAsync(Guid userId, string passwordHash, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            "UPDATE users SET password_hash = @password_hash WHERE id = @id::uuid",
+            new { password_hash = passwordHash, id = userId },
+            transaction: tx);
     }
 }

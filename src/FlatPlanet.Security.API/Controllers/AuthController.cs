@@ -60,4 +60,29 @@ public class AuthController : ApiController
         var profile = await _authService.GetProfileAsync(userId, appSlug);
         return OkData(profile);
     }
+
+    [Authorize]
+    [HttpPost("change-password")]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        var userId = GetUserId();
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        await _authService.ChangePasswordAsync(userId, request, ipAddress);
+        return OkMessage("Password changed. Please log in again.");
+    }
+
+    [HttpPost("forgot-password")]
+    public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
+    {
+        await _authService.ForgotPasswordAsync(request);
+        return OkMessage("If that email exists, a reset link has been sent.");
+    }
+
+    [HttpPost("reset-password")]
+    public async Task<IActionResult> ResetPassword([FromBody] ResetPasswordRequest request)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        await _authService.ResetPasswordAsync(request, ipAddress);
+        return OkMessage("Password reset successfully. Please log in.");
+    }
 }

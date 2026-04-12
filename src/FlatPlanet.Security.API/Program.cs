@@ -7,6 +7,7 @@ using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
+using FlatPlanet.Security.Infrastructure.Email;
 using FlatPlanet.Security.Infrastructure.Persistence;
 using FlatPlanet.Security.Infrastructure.Repositories;
 using FlatPlanet.Security.Infrastructure.Security;
@@ -27,6 +28,8 @@ var jwtOptions = builder.Configuration.GetSection(JwtOptions.Section).Get<JwtOpt
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.Section));
 builder.Services.Configure<ServiceTokenOptions>(builder.Configuration.GetSection(ServiceTokenOptions.Section));
+builder.Services.Configure<AppOptions>(builder.Configuration.GetSection(AppOptions.Section));
+builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection(SmtpOptions.Section));
 
 // Database
 builder.Services.AddSingleton<IDbConnectionFactory>(
@@ -129,6 +132,7 @@ builder.Services.AddScoped<IResourceTypeRepository, ResourceTypeRepository>();
 builder.Services.AddScoped<IResourceRepository, ResourceRepository>();
 builder.Services.AddScoped<IPermissionRepository, PermissionRepository>();
 builder.Services.AddScoped<IBusinessMembershipRepository, BusinessMembershipRepository>();
+builder.Services.AddScoped<IPasswordResetTokenRepository, PasswordResetTokenRepository>();
 
 // Services
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
@@ -149,6 +153,7 @@ builder.Services.AddScoped<IComplianceService, ComplianceService>();
 builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
 builder.Services.AddScoped<IBusinessMembershipService, BusinessMembershipService>();
+builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 
 var app = builder.Build();
 
