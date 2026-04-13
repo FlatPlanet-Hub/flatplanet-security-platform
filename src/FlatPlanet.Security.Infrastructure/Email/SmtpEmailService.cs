@@ -35,6 +35,7 @@ public class SmtpEmailService : IEmailService
         message.Body = new TextPart("plain") { Text = body };
 
         using var client = new SmtpClient();
+        client.Timeout = 10_000;
         await client.ConnectAsync(_options.Host, _options.Port, SecureSocketOptions.StartTls);
         await client.AuthenticateAsync(_options.Username, _options.Password);
         await client.SendAsync(message);
