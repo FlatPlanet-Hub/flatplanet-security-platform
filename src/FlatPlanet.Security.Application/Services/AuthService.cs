@@ -382,55 +382,78 @@ public class AuthService : IAuthService
         if (user is null)
             return;
 
-        var plain = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(plain))).ToLowerInvariant();
-
-        await _resetTokens.InvalidatePendingByUserAsync(user.Id);
-        await _resetTokens.CreateAsync(new PasswordResetToken
-        {
-            UserId = user.Id,
-            TokenHash = hash,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(15)
-        });
-
-        var link = $"{_appOptions.Value.BaseUrl.TrimEnd('/')}/reset-password?token={plain}";
-
         try
         {
-            await _emailService.SendPasswordResetEmailAsync(user.Email, link);
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "Failed to send password reset email to {Email}", user.Email);
-        }
+            var plain = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(plain))).ToLowerInvariant();
 
-        try
-        {
-            await _auditLog.LogAsync(new AuthAuditLog
+            await _resetTokens.InvalidatePendingByUserAsync(user.Id);
+            await _resetTokens.CreateAsync(new PasswordResetToken
             {
                 UserId = user.Id,
-                EventType = AuditEventType.PasswordResetRequested
+                TokenHash = hash,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(15)
             });
+
+            var link = $"{_appOptions.Value.BaseUrl.TrimEnd('/')}/reset-password?token={plain}";
+
+            try
+            {
+                await _emailService.SendPasswordResetEmailAsync(user.Email, link);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send password reset email to {Email}", user.Email);
+            }
+
+            try
+            {
+                await _auditLog.LogAsync(new AuthAuditLog
+                {
+                    UserId = user.Id,
+                    EventType = AuditEventType.PasswordResetRequested
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Audit log failed for PasswordResetRequested user {UserId}", user.Id);
+            }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Audit log failed for PasswordResetRequested user {UserId}", user.Id);
+            _logger.LogError(ex, "ForgotPasswordAsync failed for user {UserId} — token not created", user.Id);
+            // Still return 200 — never reveal whether email exists or not
         }
     }
 
     public async Task ResetPasswordAsync(ResetPasswordRequest request, string? ipAddress)
     {
-        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(request.Token))).ToLowerInvariant();
-
-        var token = await _resetTokens.GetValidByTokenHashAsync(hash)
-            ?? throw new ArgumentException("Reset token is invalid or has expired.");
-
+        // Validate inputs FIRST — before any DB call
         var (isValid, errorMessage) = PasswordPolicyValidator.Validate(request.NewPassword);
         if (!isValid)
             throw new ArgumentException(errorMessage);
 
         if (request.NewPassword != request.ConfirmPassword)
             throw new ArgumentException("Passwords do not match.");
+
+        // Token lookup — map any DB error to a generic invalid-token response
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(request.Token))).ToLowerInvariant();
+
+        PasswordResetToken token;
+        try
+        {
+            token = await _resetTokens.GetValidByTokenHashAsync(hash)
+                ?? throw new ArgumentException("Reset token is invalid or has expired.");
+        }
+        catch (ArgumentException)
+        {
+            throw; // re-throw the "invalid or expired" message as-is
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Token lookup failed in ResetPasswordAsync");
+            throw new ArgumentException("Reset token is invalid or has expired.");
+        }
 
         var user = await _users.GetByIdAsync(token.UserId)
             ?? throw new KeyNotFoundException("User account no longer exists.");
@@ -456,17 +479,31 @@ public class AuthService : IAuthService
             }
         }
 
-        await Task.WhenAll(
-            _sessions.EndAllActiveSessionsByUserAsync(token.UserId, "password_reset"),
-            _refreshTokens.RevokeAllByUserAsync(token.UserId, "password_reset")
-        );
-
-        await _auditLog.LogAsync(new AuthAuditLog
+        try
         {
-            UserId = token.UserId,
-            EventType = AuditEventType.PasswordResetCompleted,
-            IpAddress = ipAddress
-        });
+            await Task.WhenAll(
+                _sessions.EndAllActiveSessionsByUserAsync(token.UserId, "password_reset"),
+                _refreshTokens.RevokeAllByUserAsync(token.UserId, "password_reset")
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to revoke sessions/tokens after password reset for user {UserId}", token.UserId);
+        }
+
+        try
+        {
+            await _auditLog.LogAsync(new AuthAuditLog
+            {
+                UserId = token.UserId,
+                EventType = AuditEventType.PasswordResetCompleted,
+                IpAddress = ipAddress
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Audit log failed for PasswordResetCompleted user {UserId}", token.UserId);
+        }
     }
 
     private async Task<Dictionary<string, string>> LoadConfigAsync()
