@@ -259,22 +259,24 @@ public class AuthService : IAuthService
             throw new UnauthorizedAccessException("Invalid or expired refresh token.");
 
         // Case: token was recently rotated — grace period reuse detection
+        // stored IS the parent row — it already carries ReplacedByTokenPlain and RotatedAt
         if (stored.Revoked && stored.RevokedReason == "rotated")
         {
             var graceSeconds = Cfg("refresh_token_grace_period_seconds", 30);
-            var parentRow = await _refreshTokens.GetRecentlyRotatedAsync(tokenHash, graceSeconds);
 
-            if (parentRow?.ReplacedByTokenPlain is null)
+            if (stored.RotatedAt is null ||
+                stored.RotatedAt.Value < DateTime.UtcNow.AddSeconds(-graceSeconds) ||
+                stored.ReplacedByTokenPlain is null)
                 throw new UnauthorizedAccessException("Invalid or expired refresh token.");
 
             // Re-issue a fresh access token for the same user/session
-            var graceUser = await _users.GetByIdAsync(parentRow.UserId)
+            var graceUser = await _users.GetByIdAsync(stored.UserId)
                 ?? throw new UnauthorizedAccessException("User not found.");
 
             if (graceUser.Status != "active")
                 throw new ForbiddenException($"User account is {graceUser.Status}.");
 
-            var graceSessionId = parentRow.SessionId ?? Guid.Empty;
+            var graceSessionId = stored.SessionId ?? Guid.Empty;
             var gracePlatformRoles = await _roles.GetPlatformRoleNamesForUserAsync(graceUser.Id);
             var graceAccessToken = await _jwt.IssueAccessTokenAsync(graceUser, graceSessionId, gracePlatformRoles);
             var graceAccessExpiry = Cfg("jwt_access_expiry_minutes", 60);
@@ -282,7 +284,7 @@ public class AuthService : IAuthService
             return new RefreshResponse
             {
                 AccessToken  = graceAccessToken,
-                RefreshToken = parentRow.ReplacedByTokenPlain,
+                RefreshToken = stored.ReplacedByTokenPlain,
                 ExpiresIn    = graceAccessExpiry * 60
             };
         }
