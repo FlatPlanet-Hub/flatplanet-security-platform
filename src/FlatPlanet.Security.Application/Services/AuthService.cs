@@ -254,9 +254,44 @@ public class AuthService : IAuthService
         var tokenHash = _jwt.HashToken(request.RefreshToken);
         var stored = await _refreshTokens.GetByTokenHashAsync(tokenHash);
 
-        if (stored is null || stored.Revoked || stored.ExpiresAt < DateTime.UtcNow)
+        // Case: token not found at all
+        if (stored is null)
             throw new UnauthorizedAccessException("Invalid or expired refresh token.");
 
+        // Case: token was recently rotated — grace period reuse detection
+        if (stored.Revoked && stored.RevokedReason == "rotated")
+        {
+            var graceSeconds = Cfg("refresh_token_grace_period_seconds", 30);
+            var parentRow = await _refreshTokens.GetRecentlyRotatedAsync(tokenHash, graceSeconds);
+
+            if (parentRow?.ReplacedByTokenPlain is null)
+                throw new UnauthorizedAccessException("Invalid or expired refresh token.");
+
+            // Re-issue a fresh access token for the same user/session
+            var graceUser = await _users.GetByIdAsync(parentRow.UserId)
+                ?? throw new UnauthorizedAccessException("User not found.");
+
+            if (graceUser.Status != "active")
+                throw new ForbiddenException($"User account is {graceUser.Status}.");
+
+            var graceSessionId = parentRow.SessionId ?? Guid.Empty;
+            var gracePlatformRoles = await _roles.GetPlatformRoleNamesForUserAsync(graceUser.Id);
+            var graceAccessToken = await _jwt.IssueAccessTokenAsync(graceUser, graceSessionId, gracePlatformRoles);
+            var graceAccessExpiry = Cfg("jwt_access_expiry_minutes", 60);
+
+            return new RefreshResponse
+            {
+                AccessToken  = graceAccessToken,
+                RefreshToken = parentRow.ReplacedByTokenPlain,
+                ExpiresIn    = graceAccessExpiry * 60
+            };
+        }
+
+        // Case: token is revoked for any other reason, or expired
+        if (stored.Revoked || stored.ExpiresAt < DateTime.UtcNow)
+            throw new UnauthorizedAccessException("Invalid or expired refresh token.");
+
+        // Normal rotation path
         var user = await _users.GetByIdAsync(stored.UserId)
             ?? throw new UnauthorizedAccessException("User not found.");
 
@@ -265,12 +300,14 @@ public class AuthService : IAuthService
 
         var refreshExpiryDays = Cfg("jwt_refresh_expiry_days", 7);
 
-        await _refreshTokens.RevokeAsync(stored.Id, "rotated");
-
+        // Generate new token FIRST, then rotate (order matters for grace period)
         var (newTokenPlain, newTokenHash) = _jwt.GenerateRefreshToken();
+
+        await _refreshTokens.RotateAsync(stored.Id, newTokenHash, newTokenPlain);
+
         await _refreshTokens.CreateAsync(new RefreshToken
         {
-            UserId = user.Id,
+            UserId    = user.Id,
             SessionId = stored.SessionId,
             TokenHash = newTokenHash,
             ExpiresAt = DateTime.UtcNow.AddDays(refreshExpiryDays)
@@ -286,16 +323,16 @@ public class AuthService : IAuthService
 
         await _auditLog.LogAsync(new AuthAuditLog
         {
-            UserId = user.Id,
+            UserId    = user.Id,
             EventType = AuditEventType.TokenRefresh,
             IpAddress = ipAddress
         });
 
         return new RefreshResponse
         {
-            AccessToken = accessToken,
+            AccessToken  = accessToken,
             RefreshToken = newTokenPlain,
-            ExpiresIn = accessExpiryMinutes * 60
+            ExpiresIn    = accessExpiryMinutes * 60
         };
     }
 
