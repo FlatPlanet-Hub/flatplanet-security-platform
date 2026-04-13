@@ -33,23 +33,8 @@ jobs:
 
       - name: Deploy to Azure App Service
         if: github.ref == 'refs/heads/main'
-        env:
-          PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-        run: |
-          # Extract credentials from the ZipDeploy profile entry specifically
-          USERNAME=$(echo "$PUBLISH_PROFILE" | grep -oP 'publishMethod="ZipDeploy"[^>]*userName="\K[^"]+')
-          PASSWORD=$(echo "$PUBLISH_PROFILE" | grep -oP 'publishMethod="ZipDeploy"[^>]*userPWD="\K[^"]+')
-          echo "USERNAME length: ${#USERNAME}"
-          echo "PASSWORD length: ${#PASSWORD}"
-          CREDENTIALS=$(printf '%s:%s' "$USERNAME" "$PASSWORD" | base64 -w 0)
-          cd ./publish && zip -r ../app.zip . && cd ..
-          HTTP_STATUS=$(curl -s -o response.txt -w "%{http_code}" -X POST \
-            "https://flatplanet-security-api-d5cgdyhmgxcebyak.scm.southeastasia-01.azurewebsites.net/api/zipdeploy" \
-            -H "Authorization: Basic $CREDENTIALS" \
-            --data-binary @app.zip)
-          echo "Deploy response: $HTTP_STATUS"
-          cat response.txt || true
-          if [ "$HTTP_STATUS" != "200" ] && [ "$HTTP_STATUS" != "202" ]; then
-            echo "Deployment failed with HTTP $HTTP_STATUS"
-            exit 1
-          fi
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: flatplanet-security-api
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: ./publish
