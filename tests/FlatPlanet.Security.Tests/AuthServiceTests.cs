@@ -286,8 +286,8 @@ public class AuthServiceTests
             });
         _users.Setup(u => u.GetByIdAsync(userId))
             .ReturnsAsync(new User { Id = userId, Email = "user@test.com", FullName = "Test", Status = "active" });
-        _refreshTokens.Setup(r => r.RevokeAsync(tokenId, "rotated")).Returns(Task.CompletedTask);
         _jwt.Setup(j => j.GenerateRefreshToken()).Returns(("new-plain", "new-hash"));
+        _refreshTokens.Setup(r => r.RotateAsync(tokenId, "new-hash", "new-plain")).Returns(Task.CompletedTask);
         _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>()))
             .ReturnsAsync((RefreshToken t) => t);
         _roles.Setup(r => r.GetPlatformRoleNamesForUserAsync(userId)).ReturnsAsync(new List<string>());
@@ -302,7 +302,7 @@ public class AuthServiceTests
         // Assert
         Assert.Equal("new-access-token", result.AccessToken);
         Assert.Equal("new-plain", result.RefreshToken);
-        _refreshTokens.Verify(r => r.RevokeAsync(tokenId, "rotated"), Times.Once);
+        _refreshTokens.Verify(r => r.RotateAsync(tokenId, "new-hash", "new-plain"), Times.Once);
     }
 
     [Fact]
