@@ -38,12 +38,15 @@ jobs:
         run: |
           RAW_USER=$(echo "$PUBLISH_PROFILE" | grep -oP 'userName="\K[^"]+' | head -1)
           PASSWORD=$(echo "$PUBLISH_PROFILE" | grep -oP 'userPWD="\K[^"]+' | head -1)
-          # URL-encode $ in username (%24) for basic auth
-          USERNAME=$(echo "$RAW_USER" | sed 's/\$/%24/g')
+          echo "RAW_USER length: ${#RAW_USER}"
+          echo "PASSWORD length: ${#PASSWORD}"
+          echo "RAW_USER prefix: ${RAW_USER:0:5}"
+          # Build Basic auth header with base64 encoding
+          CREDENTIALS=$(printf '%s:%s' "$RAW_USER" "$PASSWORD" | base64 -w 0)
           cd ./publish && zip -r ../app.zip . && cd ..
           HTTP_STATUS=$(curl -s -o response.txt -w "%{http_code}" -X POST \
             "https://flatplanet-security-api-d5cgdyhmgxcebyak.scm.southeastasia-01.azurewebsites.net/api/zipdeploy" \
-            -u "$USERNAME:$PASSWORD" \
+            -H "Authorization: Basic $CREDENTIALS" \
             --data-binary @app.zip)
           echo "Deploy response: $HTTP_STATUS"
           cat response.txt || true
