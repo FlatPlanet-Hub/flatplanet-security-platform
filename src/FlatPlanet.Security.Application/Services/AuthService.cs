@@ -343,12 +343,12 @@ public class AuthService : IAuthService
         if (!_passwordHasher.Verify(request.CurrentPassword, user.PasswordHash))
             throw new UnauthorizedAccessException("Current password is incorrect.");
 
-        if (request.NewPassword != request.ConfirmPassword)
-            throw new ArgumentException("Passwords do not match.");
-
         var (isValid, errorMessage) = PasswordPolicyValidator.Validate(request.NewPassword);
         if (!isValid)
             throw new ArgumentException(errorMessage);
+
+        if (request.NewPassword != request.ConfirmPassword)
+            throw new ArgumentException("Passwords do not match.");
 
         if (_passwordHasher.Verify(request.NewPassword, user.PasswordHash))
             throw new ArgumentException("New password must be different from the current password.");
@@ -356,10 +356,17 @@ public class AuthService : IAuthService
         var newHash = _passwordHasher.Hash(request.NewPassword);
         await _users.UpdatePasswordHashAsync(userId, newHash);
 
-        await Task.WhenAll(
-            _sessions.EndAllActiveSessionsByUserAsync(userId, "password_changed"),
-            _refreshTokens.RevokeAllByUserAsync(userId, "password_changed")
-        );
+        try
+        {
+            await Task.WhenAll(
+                _sessions.EndAllActiveSessionsByUserAsync(userId, "password_changed"),
+                _refreshTokens.RevokeAllByUserAsync(userId, "password_changed")
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to revoke sessions/tokens after password change for user {UserId}", userId);
+        }
 
         await _auditLog.LogAsync(new AuthAuditLog
         {
@@ -386,7 +393,7 @@ public class AuthService : IAuthService
             ExpiresAt = DateTime.UtcNow.AddMinutes(15)
         });
 
-        var link = $"{_appOptions.Value.BaseUrl}/reset-password?token={plain}";
+        var link = $"{_appOptions.Value.BaseUrl.TrimEnd('/')}/reset-password?token={plain}";
 
         try
         {
@@ -397,11 +404,18 @@ public class AuthService : IAuthService
             _logger.LogError(ex, "Failed to send password reset email to {Email}", user.Email);
         }
 
-        await _auditLog.LogAsync(new AuthAuditLog
+        try
         {
-            UserId = user.Id,
-            EventType = AuditEventType.PasswordResetRequested
-        });
+            await _auditLog.LogAsync(new AuthAuditLog
+            {
+                UserId = user.Id,
+                EventType = AuditEventType.PasswordResetRequested
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Audit log failed for PasswordResetRequested user {UserId}", user.Id);
+        }
     }
 
     public async Task ResetPasswordAsync(ResetPasswordRequest request, string? ipAddress)
@@ -411,14 +425,18 @@ public class AuthService : IAuthService
         var token = await _resetTokens.GetValidByTokenHashAsync(hash)
             ?? throw new ArgumentException("Reset token is invalid or has expired.");
 
-        if (request.NewPassword != request.ConfirmPassword)
-            throw new ArgumentException("Passwords do not match.");
-
         var (isValid, errorMessage) = PasswordPolicyValidator.Validate(request.NewPassword);
         if (!isValid)
             throw new ArgumentException(errorMessage);
 
-        await _users.GetByIdAsync(token.UserId);
+        if (request.NewPassword != request.ConfirmPassword)
+            throw new ArgumentException("Passwords do not match.");
+
+        var user = await _users.GetByIdAsync(token.UserId)
+            ?? throw new KeyNotFoundException("User account no longer exists.");
+
+        if (_passwordHasher.Verify(request.NewPassword, user.PasswordHash))
+            throw new ArgumentException("New password must be different from your current password.");
 
         var newHash = _passwordHasher.Hash(request.NewPassword);
 

@@ -33,6 +33,7 @@ public class PasswordResetTokenRepository : IPasswordResetTokenRepository
             """
             SELECT * FROM password_reset_tokens
             WHERE token_hash = @token_hash AND used = false AND expires_at > now()
+            ORDER BY created_at DESC
             LIMIT 1
             """,
             new { token_hash = tokenHash });
