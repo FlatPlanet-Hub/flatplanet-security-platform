@@ -36,13 +36,12 @@ jobs:
         env:
           PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
         run: |
-          RAW_USER=$(echo "$PUBLISH_PROFILE" | grep -oP 'userName="\K[^"]+' | head -1)
-          PASSWORD=$(echo "$PUBLISH_PROFILE" | grep -oP 'userPWD="\K[^"]+' | head -1)
-          echo "RAW_USER length: ${#RAW_USER}"
+          # Extract credentials from the ZipDeploy profile entry specifically
+          USERNAME=$(echo "$PUBLISH_PROFILE" | grep -oP 'publishMethod="ZipDeploy"[^>]*userName="\K[^"]+')
+          PASSWORD=$(echo "$PUBLISH_PROFILE" | grep -oP 'publishMethod="ZipDeploy"[^>]*userPWD="\K[^"]+')
+          echo "USERNAME length: ${#USERNAME}"
           echo "PASSWORD length: ${#PASSWORD}"
-          echo "RAW_USER prefix: ${RAW_USER:0:5}"
-          # Build Basic auth header with base64 encoding
-          CREDENTIALS=$(printf '%s:%s' "$RAW_USER" "$PASSWORD" | base64 -w 0)
+          CREDENTIALS=$(printf '%s:%s' "$USERNAME" "$PASSWORD" | base64 -w 0)
           cd ./publish && zip -r ../app.zip . && cd ..
           HTTP_STATUS=$(curl -s -o response.txt -w "%{http_code}" -X POST \
             "https://flatplanet-security-api-d5cgdyhmgxcebyak.scm.southeastasia-01.azurewebsites.net/api/zipdeploy" \
