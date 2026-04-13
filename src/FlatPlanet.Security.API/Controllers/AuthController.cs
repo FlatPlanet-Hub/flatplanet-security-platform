@@ -85,4 +85,16 @@ public class AuthController : ApiController
         await _authService.ResetPasswordAsync(request, ipAddress);
         return OkMessage("Password reset successfully. Please log in.");
     }
+
+    /// <summary>
+    /// Keeps the session alive by resetting the idle timeout.
+    /// Call every 10-15 minutes from long-lived clients (e.g. dashboards).
+    /// SessionValidationMiddleware handles the last_active_at update automatically.
+    /// </summary>
+    [Authorize]
+    [HttpPost("heartbeat")]
+    public IActionResult Heartbeat()
+    {
+        return OkData(new { sessionActive = true });
+    }
 }
