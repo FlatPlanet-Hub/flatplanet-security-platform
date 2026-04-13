@@ -11,4 +11,6 @@ public interface IRefreshTokenRepository
     Task RevokeAsync(Guid tokenId, string reason);
     Task RevokeAllByUserAsync(Guid userId, string reason);
     Task RevokeAllByCompanyIdAsync(Guid companyId, string reason);
+    Task RotateAsync(Guid tokenId, string newTokenHash, string newTokenPlain);
+    Task<RefreshToken?> GetRecentlyRotatedAsync(string tokenHash, int graceWindowSeconds);
 }
