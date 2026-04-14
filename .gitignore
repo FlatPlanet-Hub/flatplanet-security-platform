@@ -17,9 +17,6 @@ appsettings.Development.json
 # Rider / JetBrains
 .idea/
 
-# Agent working files
-Agents/
-
 # OS
 .DS_Store
 Thumbs.db
