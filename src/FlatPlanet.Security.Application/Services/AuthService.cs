@@ -378,7 +378,7 @@ public class AuthService : IAuthService
             ?? throw new KeyNotFoundException("User not found.");
 
         if (!_passwordHasher.Verify(request.CurrentPassword, user.PasswordHash))
-            throw new UnauthorizedAccessException("Current password is incorrect.");
+            throw new ArgumentException("Current password is incorrect.");
 
         var (isValid, errorMessage) = PasswordPolicyValidator.Validate(request.NewPassword);
         if (!isValid)
