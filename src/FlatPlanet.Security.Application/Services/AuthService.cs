@@ -445,6 +445,7 @@ public class AuthService : IAuthService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to send password reset email to {Email}", user.Email);
+                throw; // TEMP: surface SMTP error for diagnosis
             }
 
             try
