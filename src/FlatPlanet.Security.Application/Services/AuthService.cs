@@ -1,7 +1,6 @@
 using System.Text.Json;
 using FlatPlanet.Security.Application.Common.Exceptions;
 using FlatPlanet.Security.Application.Common.Helpers;
-using FlatPlanet.Security.Application.Common.Options;
 using FlatPlanet.Security.Application.DTOs.Auth;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
@@ -9,7 +8,6 @@ using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Domain.Entities;
 using FlatPlanet.Security.Domain.Enums;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 
 namespace FlatPlanet.Security.Application.Services;
 
@@ -29,7 +27,7 @@ public class AuthService : IAuthService
     private readonly IUserContextService _userContext;
     private readonly IPasswordResetTokenRepository _resetTokens;
     private readonly IEmailService _emailService;
-    private readonly IOptions<AppOptions> _appOptions;
+    private readonly IAppRepository _apps;
     private readonly ILogger<AuthService> _logger;
 
     public AuthService(
@@ -47,7 +45,7 @@ public class AuthService : IAuthService
         IUserContextService userContext,
         IPasswordResetTokenRepository resetTokens,
         IEmailService emailService,
-        IOptions<AppOptions> appOptions,
+        IAppRepository apps,
         ILogger<AuthService> logger)
     {
         _passwordHasher = passwordHasher;
@@ -64,7 +62,7 @@ public class AuthService : IAuthService
         _userContext = userContext;
         _resetTokens = resetTokens;
         _emailService = emailService;
-        _appOptions = appOptions;
+        _apps = apps;
         _logger = logger;
     }
 
@@ -421,6 +419,10 @@ public class AuthService : IAuthService
         if (user is null)
             return;
 
+        var app = await _apps.GetBySlugAsync(request.AppSlug);
+        if (app is null)
+            return;
+
         try
         {
             var plain = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
@@ -434,7 +436,7 @@ public class AuthService : IAuthService
                 ExpiresAt = DateTime.UtcNow.AddMinutes(15)
             });
 
-            var link = $"{_appOptions.Value.BaseUrl.TrimEnd('/')}/reset-password?token={plain}";
+            var link = $"{app.BaseUrl.TrimEnd('/')}/reset-password?token={plain}";
 
             try
             {
