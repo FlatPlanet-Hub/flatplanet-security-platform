@@ -1,8 +1,8 @@
 # FlatPlanet — Frontend Integration Guide
 
 **Audience:** Frontend developers
-**Last updated:** 2026-04-07
-**Verified against:** Security Platform v1.2.2 · Platform API (HubApi) v1.0.1
+**Last updated:** 2026-04-13
+**Verified against:** Security Platform v1.4.0 · Platform API (HubApi) v1.0.1
 **Tested by:** Integration tester (Claude Code)
 
 ---
@@ -10,6 +10,15 @@
 ## What's New in This Version
 
 > These are verified changes from integration testing — update your frontend accordingly.
+
+### Security Platform v1.4.0 (2026-04-13)
+
+| # | Change | Impact |
+|---|---|---|
+| 1 | `POST /api/v1/auth/change-password` added (FEAT-CP) | Authenticated users can change their password without admin help; all sessions revoked on success — redirect to login |
+| 2 | `POST /api/v1/auth/forgot-password` added (FEAT-FP) | Initiates email-based reset; always returns 200 to prevent enumeration |
+| 3 | `POST /api/v1/auth/reset-password` added (FEAT-FP) | Consumes single-use 15-min token and sets a new password; all sessions revoked |
+| 4 | Password policy now enforced on all password-setting flows | Min 8 chars, uppercase, lowercase, digit, special char — surface policy to users before they submit |
 
 ### Platform API v1.0.1 (2026-04-07)
 
@@ -589,6 +598,126 @@ async function handleDownloadWorkspace(projectId) {
 Revokes all refresh tokens and ends the session. Clear both tokens and redirect to login.
 
 **Response `200`:** `{ "success": true, "message": "Logged out successfully." }`
+
+---
+
+## Step 8 — Change Password
+
+**Endpoint:** `POST /api/v1/auth/change-password` on the Security Platform
+
+**Auth required:** Yes — include the current access token in the `Authorization` header.
+
+**Request:**
+```json
+{
+  "currentPassword": "OldP@ss1!",
+  "newPassword": "NewP@ss2!",
+  "confirmPassword": "NewP@ss2!"
+}
+```
+
+**Response `200`:**
+```json
+{ "success": true, "message": "Password changed. Please log in again." }
+```
+
+**Password policy** (enforce client-side before submitting):
+
+| Rule | Requirement |
+|---|---|
+| Minimum length | 8 characters |
+| Uppercase | At least one A–Z |
+| Lowercase | At least one a–z |
+| Digit | At least one 0–9 |
+| Special character | At least one of `!@#$%^&*()_+-=[]{}|;':",./<>?` |
+
+**Error cases:**
+
+| HTTP | Message | Action |
+|---|---|---|
+| `400` | Current password is incorrect. | Show inline error on the current-password field |
+| `400` | New password must be different from the current password. | Show inline error on the new-password field |
+| `400` | Passwords do not match. | Show inline error on confirm-password field |
+| `400` | *(policy message)* | Show password requirements hint |
+| `401` | — | Session expired — redirect to login |
+
+**Frontend implementation notes:**
+
+- On `200`, immediately clear both tokens from storage and redirect to the login page. All sessions have been revoked server-side.
+- Validate the password policy client-side to give the user immediate feedback before the request is sent.
+- Do not expose the current password field error message verbatim to help prevent brute-force probing of the form.
+
+---
+
+## Step 9 — Forgot Password (Request Reset Link)
+
+**Endpoint:** `POST /api/v1/auth/forgot-password` on the Security Platform
+
+**Auth required:** No
+
+**Request:**
+```json
+{
+  "email": "alice@acme.com"
+}
+```
+
+**Response `200` (always):**
+```json
+{ "success": true, "message": "If that email exists, a reset link has been sent." }
+```
+
+**Error cases:**
+
+| HTTP | Message | Action |
+|---|---|---|
+| `400` | *(validation message)* | Missing or invalid email format |
+
+**Frontend implementation notes:**
+
+- Always show the same confirmation message regardless of the response — do not indicate whether the email was found.
+- The reset link in the email points to `{BaseUrl}/reset-password?token={rawToken}`. Your reset-password page must read the `token` query parameter and pass it to the reset endpoint.
+- The token expires in **15 minutes** — surface this to the user on the confirmation screen ("Check your inbox — the link expires in 15 minutes").
+
+---
+
+## Step 10 — Reset Password (Consume Reset Token)
+
+**Endpoint:** `POST /api/v1/auth/reset-password` on the Security Platform
+
+**Auth required:** No
+
+The user lands on your `/reset-password?token=...` page from the email link. Read the `token` from the URL and submit it with the new password.
+
+**Request:**
+```json
+{
+  "token": "a3f1b2c4d5e6...",
+  "newPassword": "NewP@ss2!",
+  "confirmPassword": "NewP@ss2!"
+}
+```
+
+**Response `200`:**
+```json
+{ "success": true, "message": "Password reset successfully. Please log in." }
+```
+
+**Error cases:**
+
+| HTTP | Message | Action |
+|---|---|---|
+| `400` | Reset token is invalid or has expired. | Show error and prompt user to request a new link |
+| `400` | New password must be different from the current password. | Show inline error on new-password field |
+| `400` | Passwords do not match. | Show inline error on confirm-password field |
+| `400` | *(policy message)* | Show password requirements hint |
+
+**Frontend implementation notes:**
+
+- Apply the same password policy validation client-side as in Step 8.
+- On `200`, redirect to the login page with a success banner: "Password reset successfully. Please log in."
+- On `400` with "invalid or expired", redirect to the forgot-password page so the user can request a fresh link. The used or expired token cannot be retried.
+- The token is extracted from the URL as-is — do not decode or transform it before sending.
 
 ---
 

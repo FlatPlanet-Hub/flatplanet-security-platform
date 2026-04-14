@@ -85,6 +85,14 @@ Copy `appsettings.json` and fill in your values:
   },
   "Cors": {
     "AllowedOrigins": ["https://your-frontend.com"]
+  },
+  "Smtp": {
+    "Host": "smtp.your-provider.com",
+    "Port": 587,
+    "Username": "your-smtp-username",
+    "Password": "your-smtp-password",
+    "FromAddress": "noreply@your-domain.com",
+    "FromName": "FlatPlanet Security"
   }
 }
 ```
@@ -154,6 +162,18 @@ Authorization: Bearer <accessToken>
 
 Sessions are enforced by middleware on every request — idle and absolute timeouts are configurable via the security config API.
 
+**Password self-service**
+
+Users can change their password or reset a forgotten one without admin involvement:
+
+```
+POST /api/v1/auth/change-password   → change password (JWT required); revokes all sessions on success
+POST /api/v1/auth/forgot-password   → send reset link to email (no auth required)
+POST /api/v1/auth/reset-password    → consume reset token and set new password (no auth required)
+```
+
+Reset tokens expire in 15 minutes and are single-use. A SHA-256 hash is stored — the raw token is never persisted. SMTP must be configured under the `Smtp` section in `appsettings.json` for reset emails to be delivered.
+
 **Server-to-server (Service Token)**
 
 Backend services (e.g. HubApi) authenticate using a static bearer token configured in `appsettings.json` under `ServiceToken.Token`. The service token grants full `platform_owner` + `app_admin` access. Set a minimum 32-character secret and keep it out of source control.
@@ -196,6 +216,6 @@ Companies now carry an optional short `code` identifier (e.g. `"fp"`). The `code
 
 ## Documentation
 
-- **[API Reference](docs/security-api-reference.md)** — all 46 endpoints with request/response schemas, field tables, error cases
+- **[API Reference](docs/security-api-reference.md)** — all 49 endpoints with request/response schemas, field tables, error cases
 - **[Changelog](CHANGELOG.md)** — full version history
 - **[Feature Spec](docs/Feature.md)** — complete feature specification and requirements
