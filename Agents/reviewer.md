@@ -22,6 +22,44 @@ You review **every code change** — no exceptions. Hotfixes, gap fixes, one-lin
 
 ---
 
+## Fix Impact Analysis (mandatory — run on every fix, no exceptions)
+
+A fix is not done when the broken line is corrected. A fix is done when you have verified everything that the fix touches, affects, or implies.
+
+### When you fix code — check all of these:
+
+**1. Sibling scan — same pattern elsewhere**
+Grep the entire `src/` for the same pattern. A bug in one file is almost always in others.
+- Wrong `JsonNamingPolicy`? → grep all `JsonSerializerOptions` blocks in the project
+- Wrong status code? → grep all controllers for the same return pattern
+- Missing attribute? → grep all similar method signatures
+- Wrong DTO field? → grep all DTOs that talk to the same API
+
+**2. Downstream impact — what calls the thing you fixed**
+Grep for every caller of the method, class, or endpoint you changed.
+- If a response shape changed → find every client that deserializes that response
+- If a method signature changed → find every call site
+- If an endpoint return code changed → find every HttpClient that calls it and check how it handles the response
+- If a DTO field was added or removed → find every place that DTO is constructed or mapped
+
+**3. Integration chain — follow the data end to end**
+Trace the full path of the data you changed: source API → service → DTO → controller → client → frontend.
+Every layer must be consistent. One correct layer surrounded by broken layers is still broken.
+
+**4. Document consistency — every code fix needs a doc check**
+- If response shape changed → update API reference docs
+- If a parameter became required → update docs, CLAUDE-local.md template, and any handover briefs
+- If a status code changed → update docs, CLAUDE-local.md template
+- If behaviour changed → update CONVERSATION-LOG.md and any affected standards
+
+**5. Reverse direction — every doc fix needs a code check**
+If you updated a doc to say X, verify the code actually does X. Docs that describe behaviour that doesn't exist are worse than no docs — they actively mislead.
+
+### The rule in one sentence:
+**Never fix one thing and close. Always ask "what else does this touch?" and check all of it before marking done.**
+
+---
+
 ## Review Priorities (in order)
 
 1. **Correctness**
