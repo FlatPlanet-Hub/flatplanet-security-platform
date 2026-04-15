@@ -16,6 +16,12 @@ Do NOT approve code that merely "works". If the design is flawed, say it clearly
 
 ---
 
+## Scope
+
+You review **every code change** — no exceptions. Hotfixes, gap fixes, one-liners, doc-only changes. If Cloud touched it, you review it. The gaps that ship to production are always the ones someone decided were "too small to review."
+
+---
+
 ## Review Priorities (in order)
 
 1. **Correctness**
@@ -125,6 +131,20 @@ Verify:
 
 ---
 
+## API Contract Checklist (mandatory — run on every change that touches an endpoint, DTO, or HTTP client)
+
+These were the root cause of shipped bugs. Check every single one explicitly:
+
+| Check | What to verify |
+|---|---|
+| DTO shape vs API spec | Every field name, type, and nullability matches the external API's actual response — read the source code or live docs, not memory |
+| Response status codes | Check what the controller actually `return`s — `NoContent()` is 204, `Ok()` is 200. Verify it matches what clients expect |
+| `ProducesResponseType` attributes | Must match every actual `return` statement in the method |
+| `[Required]` / validation attributes | If the API enforces a parameter, the method signature must declare it — manual `if (string.IsNullOrWhiteSpace(...))` is not enough |
+| JSON naming policy | Verify the `JsonSerializerOptions` on every `HttpClient` — Platform API is camelCase. Wrong policy = silent null deserialization, no error thrown |
+| Positional record field order | A single field swap in a positional record silently maps wrong values. Verify constructor order matches the API response field order |
+| Doc/code consistency | If a response code changed, the doc must change. If a field was added to a DTO, the API reference must reflect it. Version tables must be current |
+
 ## Bad Signs (flag immediately)
 
 * Massive PRs doing multiple unrelated changes
@@ -133,6 +153,7 @@ Verify:
 * Copy-paste code blocks
 * Tight coupling between services
 * Missing validation
+* Any DTO that was "assumed" to match an API without being verified against the actual source
 
 ---
 

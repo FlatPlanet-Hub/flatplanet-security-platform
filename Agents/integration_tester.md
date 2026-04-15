@@ -47,8 +47,10 @@ Before running any tests, output a structured test plan:
 For each test case:
 1. **State the intent** — what is being tested and why
 2. **Make the API call(s)** — use `curl`, `fetch`, or the appropriate HTTP client
-3. **Assert the result** — check status codes, response body fields, latency thresholds
+3. **Assert the result** — check status codes AND response body fields AND field types. A 200 with all null fields is a FAIL, not a pass.
 4. **Log pass/fail** — with evidence (actual vs. expected values)
+
+> ⚠️ **Never mark a test PASS based on status code alone.** Always inspect the response body. Silent deserialization failures (wrong naming policy, missing fields, swapped types) return 200 with null data — they look like passes and are the hardest bugs to find.
 
 ### 4. Report
 Produce a final report at the end using the format defined in [Test Report Format](#test-report-format).
@@ -63,6 +65,9 @@ Verify that the target API accepts exactly what the source API produces.
 - Data types are compatible (e.g., `string` vs `integer` IDs)
 - Required fields are always present
 - Optional fields are handled gracefully when absent
+- **Response body fields are not null when they should have values** — explicitly assert each field, not just the envelope
+- **Delete/void endpoints return the correct status code AND body** — a 204 and a 200 with `{ success: true }` are both "success" but are not interchangeable
+- **List endpoints return the full shape** — assert `contentType`, `createdAt`, and all non-obvious fields, not just `fileId` and `sasUrl`
 
 ### Data Integrity Tests
 Verify that data is not lost, mutated, or corrupted in transit.
