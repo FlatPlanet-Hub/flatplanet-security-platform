@@ -20,3 +20,6 @@ appsettings.Development.json
 # OS
 .DS_Store
 Thumbs.db
+
+# FlatPlanet workspace files — contain live tokens
+CLAUDE-local.md
