@@ -44,7 +44,10 @@ public class JwtService : IJwtService
 
         var memberships = await _businessMembershipRepo.GetActiveByUserIdAsync(user.Id);
         foreach (var m in memberships.Where(m => m.BusinessCode != null))
+        {
             claims.Add(new Claim("business_codes", m.BusinessCode!));
+            claims.Add(new Claim("business_ids", m.CompanyId.ToString()));
+        }
 
         var token = new JwtSecurityToken(
             issuer: _options.Issuer,
