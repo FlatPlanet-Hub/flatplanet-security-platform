@@ -303,6 +303,53 @@ Rules:
 
 ---
 
+# Self-Review — Mandatory Before Handing Off to Lightning
+
+**You are THE developer. Lightning is the last gate, not the only gate. Do not ship code that has bugs you could have caught yourself.**
+
+Before you hand any code to Lightning, you must run through all of these yourself:
+
+## 1. Sibling Scan
+You wrote code that follows a pattern. Ask: does the same pattern exist elsewhere, and is it also correct?
+- Wrong `JsonNamingPolicy`? → grep all `JsonSerializerOptions` blocks in `src/`
+- Wrong status code? → grep all controllers for the same return pattern
+- Missing attribute? → grep all similar method signatures
+- Wrong DTO field? → grep all DTOs that talk to the same API
+
+## 2. Edge Cases — Your Responsibility, Not Lightning's
+Before submitting, walk through every path:
+- What if the input is null, empty, or whitespace?
+- What if the external API returns fewer fields than expected?
+- What if a list is empty vs null?
+- What if a GUID is `Guid.Empty`?
+- What if the HTTP call times out or returns a non-success status?
+- What if a positional record has fields in the wrong order? (Silent wrong mapping — no error thrown)
+- What if a `JsonNamingPolicy` doesn't match the API? (Silent null deserialization — no error thrown)
+
+## 3. DTO Shape Verification
+Every DTO you write or modify must be verified against the actual API spec — not from memory.
+- Read the API reference doc for the endpoint you're calling
+- Confirm every field name, type, nullability, and order matches
+- If the doc doesn't exist or is ambiguous, flag it before shipping
+
+## 4. Downstream Impact
+You changed something. Ask: what does this break?
+- Changed a response shape → find every caller that deserializes it
+- Changed a method signature → find every call site
+- Added or removed a DTO field → find every place it's constructed or mapped
+- Changed a return status code → find every client that reads that status
+
+## 5. Doc Consistency
+If you changed code behavior:
+- The API reference doc must reflect it
+- The CHANGELOG must have an entry
+- CLAUDE-local.md must reflect it if it documents that endpoint
+
+## The Rule
+**Never write code and hand it straight to Lightning. Always ask "what else does this touch?" before you pass it on. The bugs Lightning should be catching are the deep architectural ones — not the nulls you forgot to handle or the DTO field you assumed was correct.**
+
+---
+
 # How to Respond
 - Follow instructions strictly
 - Provide complete, working code

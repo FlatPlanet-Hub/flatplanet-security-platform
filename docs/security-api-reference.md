@@ -138,6 +138,7 @@ Verifies credentials against the platform's database (bcrypt, work factor 12). I
     "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "refreshToken": "v2.local.abc123...",
     "expiresIn": 3600,
+    "idleTimeoutMinutes": 30,
     "user": {
       "userId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
       "email": "alice@acme.com",
@@ -153,6 +154,7 @@ Verifies credentials against the platform's database (bcrypt, work factor 12). I
 | `accessToken` | string | JWT. Lifetime = `jwt_access_expiry_minutes` × 60 seconds. |
 | `refreshToken` | string | Opaque token. Store securely. Single-use (rotated on each refresh). |
 | `expiresIn` | integer | Access token lifetime in **seconds**. |
+| `idleTimeoutMinutes` | integer | Session idle timeout in **minutes**. Session is invalidated if no authenticated request arrives within this window. Use this to schedule heartbeats — fire at `idleTimeoutMinutes × 0.5` minutes. |
 | `user.userId` | UUID | Use this as the user identifier in downstream calls. |
 | `user.companyId` | string | UUID as string. |
 
@@ -481,6 +483,36 @@ Completes a password reset using the token from the reset link email. On success
 - The token is **single-use**. It is invalidated immediately on success.
 - Token expiry is **15 minutes** from when the forgot-password request was made.
 - All sessions and all refresh tokens are revoked on success.
+
+---
+
+### POST /api/v1/auth/heartbeat
+
+Resets the session idle timer. Call this endpoint periodically from long-lived clients (dashboards, SPAs) to keep the session alive while the user is active but not making other API calls.
+
+**Auth required**: Yes
+
+#### Request
+
+No body.
+
+#### Success Response — 200
+
+```json
+{ "success": true, "data": { "sessionActive": true } }
+```
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `401` | — | Missing or invalid token, or session has already expired. |
+
+#### Notes
+
+- Fire this request at an interval of `idleTimeoutMinutes × 0.5` minutes (returned at login). Example: if `idleTimeoutMinutes` is `30`, send a heartbeat every **15 minutes**.
+- A `401` response means the session has already expired. Stop the heartbeat interval, clear tokens from storage, and redirect the user to the login page. Do not attempt a token refresh — the session row is already gone.
+- `SessionValidationMiddleware` updates `last_active_at` automatically on every authenticated request, including this one.
 
 ---
 
