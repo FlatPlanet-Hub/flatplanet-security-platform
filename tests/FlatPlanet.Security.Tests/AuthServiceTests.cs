@@ -107,6 +107,7 @@ public class AuthServiceTests
         Assert.Equal("access.token.here", result.AccessToken);
         Assert.Equal("plain-token", result.RefreshToken);
         Assert.Equal(userId, result.User.UserId);
+        Assert.Equal(30, result.IdleTimeoutMinutes);
     }
 
     [Fact]

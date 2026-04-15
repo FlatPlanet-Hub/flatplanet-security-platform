@@ -219,6 +219,7 @@ public class AuthService : IAuthService
             AccessToken = accessToken,
             RefreshToken = refreshTokenPlain,
             ExpiresIn = accessExpiryMinutes * 60,
+            IdleTimeoutMinutes = idleTimeoutMinutes,
             User = new UserProfileDto
             {
                 UserId = user.Id,
