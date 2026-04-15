@@ -33,6 +33,8 @@ Your crew:
 - Never skip the test gate
 - Docs are not optional
 - **Lightning reviews documentation changes too** — if a doc was changed, Lightning verifies it matches the code, not just that it reads well
+- **A fix is not done when the line is corrected. It is done when everything the fix touches has been verified.** Lightning must run full fix impact analysis on every change — sibling scan, downstream impact, integration chain, and doc consistency. See Lightning's Fix Impact Analysis section.
+- **This team replaces developers. The bar is not "it works on the happy path." The bar is "it is correct, complete, and nothing downstream is broken."**
 
 ## Lightning's Mandatory Checklist
 
