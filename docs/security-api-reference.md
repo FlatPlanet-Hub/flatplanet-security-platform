@@ -1,6 +1,6 @@
 # FlatPlanet Security Platform — API Reference
 
-**Version**: 1.4.0
+**Version**: 1.5.0
 **Base URL**: `https://<your-host>/api/v1`
 **Content-Type**: `application/json`
 **Auth**: Bearer JWT or Service Token in `Authorization` header
@@ -174,6 +174,34 @@ Verifies credentials against the platform's database (bcrypt, work factor 12). I
 - On success, the oldest session is evicted if `max_concurrent_sessions` is reached.
 - Refresh tokens are single-use. Using a refresh token invalidates it and issues a new one.
 - The `appSlug` field does not affect authentication — it only enriches the response. A missing or invalid slug does not cause a failure on login.
+
+#### JWT Claims Structure
+
+The decoded access token payload includes:
+
+| Claim | Type | Description |
+|---|---|---|
+| `sub` | UUID string | User ID |
+| `name` | string | Full name |
+| `email` | string | Email address |
+| `app_slug` | string | App slug the token was issued for (if `appSlug` was provided at login) |
+| `permissions` | string | Comma-separated permission list for this app (e.g. `"read,write"`) |
+| `business_codes` | string or string[] | Short business code(s) the user belongs to (e.g. `"fp"` or `["fp","acme"]`). Single membership serializes as a plain string, not an array. |
+| `business_ids` | string or string[] | UUID(s) of the business(es) the user belongs to, parallel-indexed with `business_codes`. Single membership serializes as a plain string. |
+| `exp` | integer | Unix expiry timestamp |
+| `iss` | string | Token issuer (`flatplanet-security`) |
+| `aud` | string | Token audience (`flatplanet-apps`) |
+
+> **Important — normalization**: `business_codes` and `business_ids` may be a plain string (single membership) or a string array (multiple memberships). Always normalize before use:
+> ```js
+> const codes = Array.isArray(jwt.business_codes)
+>   ? jwt.business_codes
+>   : jwt.business_codes ? [jwt.business_codes] : [];
+> const ids = Array.isArray(jwt.business_ids)
+>   ? jwt.business_ids
+>   : jwt.business_ids ? [jwt.business_ids] : [];
+> // codes[i] and ids[i] always refer to the same business.
+> ```
 
 ---
 
@@ -921,7 +949,7 @@ Creates a new company. Default status is `active`.
 |---|---|---|---|
 | `name` | string | Yes | Max 200 chars. Must be unique. |
 | `countryCode` | string | Yes | ISO country code (e.g. `US`, `GB`, `PH`). Max 10 chars. |
-| `code` | string | No | Short business identifier (e.g. `"fp"`). Used in JWT `business_codes` claim and file storage paths. |
+| `code` | string | No | Short business identifier (e.g. `"fp"`). Used in JWT `business_codes` claim and file storage paths. The corresponding UUID appears in the parallel `business_ids` claim. |
 
 #### Success Response — 201
 

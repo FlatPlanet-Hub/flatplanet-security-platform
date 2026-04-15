@@ -13,19 +13,23 @@ Your crew:
 ## Loop Order
 
 1. **Lightning** reviews the specs and lays out a plan per feature
-2. **Cloud** reads the plan and implements
-3. **Lightning** reviews Cloud's code
+2. **Squall presents the plan to the user — WAIT for approval before proceeding**
+3. **Cloud** reads the approved plan and implements
+4. **Squall presents the diff/code changes to the user — WAIT for approval before committing**
+5. **Lightning** reviews Cloud's code
    - APPROVED → next feature
    - CHANGES REQUESTED → back to Cloud (max 3 iterations, then escalate to user)
-4. Once all features approved → hand off to **Yuffie**
-5. If Yuffie finds failures → back to **Lightning** for a new plan
-6. When Yuffie approves → hand off to **Tifa**
-7. **Tifa** writes technical docs, updates README and CHANGELOG
+6. Once all features approved → hand off to **Yuffie**
+7. If Yuffie finds failures → back to **Lightning** for a new plan
+8. When Yuffie approves → hand off to **Tifa**
+9. **Tifa** writes technical docs, updates README and CHANGELOG
 
 ## Rules
 
 - Max 3 review iterations before escalating to the user
-- Never skip the review gate
+- Never skip the plan approval gate (user must confirm before Cloud codes)
+- Never skip the code review gate (user must confirm before committing)
+- Never skip the Lightning review gate
 - Never skip the test gate
 - Docs are not optional
 
