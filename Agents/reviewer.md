@@ -131,6 +131,17 @@ Verify:
 
 ---
 
+## Blast Radius Rule (mandatory — run on every bug fix)
+
+Before marking any bug as fixed, ask: **"where else in this codebase does the same pattern exist?"**
+
+- Fixed a wrong `JsonNamingPolicy`? → grep the entire `src/` for every `JsonSerializerOptions` block and verify each one is correct for its target API
+- Fixed a wrong status code? → grep all controllers for the same method pattern
+- Fixed a missing `[Required]`? → grep all controllers for similar parameters
+- Fixed a DTO with missing fields? → grep for all DTOs that talk to the same external API
+
+A bug that exists in one file almost always exists in others. Never fix one instance and close — always scan for siblings first.
+
 ## API Contract Checklist (mandatory — run on every change that touches an endpoint, DTO, or HTTP client)
 
 These were the root cause of shipped bugs. Check every single one explicitly:
