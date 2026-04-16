@@ -267,6 +267,7 @@ public class AuthServiceTests
     public async Task Refresh_ShouldRotateToken_WhenValid()
     {
         // Arrange
+        SetupTransaction();
         var userId = Guid.NewGuid();
         var tokenId = Guid.NewGuid();
 
@@ -289,9 +290,9 @@ public class AuthServiceTests
         _users.Setup(u => u.GetByIdAsync(userId))
             .ReturnsAsync(new User { Id = userId, Email = "user@test.com", FullName = "Test", Status = "active" });
         _jwt.Setup(j => j.GenerateRefreshToken()).Returns(("new-plain", "new-hash"));
-        _refreshTokens.Setup(r => r.RotateAsync(tokenId, "new-hash")).Returns(Task.CompletedTask);
-        _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>()))
-            .ReturnsAsync((RefreshToken t) => t);
+        _refreshTokens.Setup(r => r.RotateAsync(tokenId, "new-hash", It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>())).Returns(Task.CompletedTask);
+        _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
+            .ReturnsAsync((RefreshToken t, IDbConnection _, IDbTransaction __) => t);
         _roles.Setup(r => r.GetPlatformRoleNamesForUserAsync(userId)).ReturnsAsync(new List<string>());
         _jwt.Setup(j => j.IssueAccessTokenAsync(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).ReturnsAsync("new-access-token");
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
@@ -304,7 +305,7 @@ public class AuthServiceTests
         // Assert
         Assert.Equal("new-access-token", result.AccessToken);
         Assert.Equal("new-plain", result.RefreshToken);
-        _refreshTokens.Verify(r => r.RotateAsync(tokenId, "new-hash"), Times.Once);
+        _refreshTokens.Verify(r => r.RotateAsync(tokenId, "new-hash", It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()), Times.Once);
     }
 
     [Fact]

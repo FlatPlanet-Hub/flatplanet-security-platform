@@ -128,4 +128,20 @@ public class RefreshTokenRepository : IRefreshTokenRepository
             new { Id = tokenId, NewTokenHash = newTokenHash });
     }
 
+    public async Task RotateAsync(Guid tokenId, string newTokenHash, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            """
+            UPDATE refresh_tokens
+            SET revoked                 = true,
+                revoked_at              = now(),
+                revoked_reason          = 'rotated',
+                replaced_by_token_hash  = @NewTokenHash,
+                rotated_at              = now()
+            WHERE id = @Id
+            """,
+            new { Id = tokenId, NewTokenHash = newTokenHash },
+            transaction: tx);
+    }
+
 }

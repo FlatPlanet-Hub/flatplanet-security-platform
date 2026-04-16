@@ -279,18 +279,32 @@ public class AuthService : IAuthService
 
         var refreshExpiryDays = Cfg("jwt_refresh_expiry_days", 7);
 
-        // Generate new token, then rotate old one
+        // Generate new token and atomically rotate old → new in a single transaction.
+        // Without a transaction, a CreateAsync failure after RotateAsync would leave the
+        // old token revoked and no new token existing — locking the user out.
         var (newTokenPlain, newTokenHash) = _jwt.GenerateRefreshToken();
 
-        await _refreshTokens.RotateAsync(stored.Id, newTokenHash);
-
-        await _refreshTokens.CreateAsync(new RefreshToken
+        using (var conn = await _db.CreateConnectionAsync())
+        using (var tx = conn.BeginTransaction())
         {
-            UserId    = user.Id,
-            SessionId = stored.SessionId,
-            TokenHash = newTokenHash,
-            ExpiresAt = DateTime.UtcNow.AddDays(refreshExpiryDays)
-        });
+            try
+            {
+                await _refreshTokens.RotateAsync(stored.Id, newTokenHash, conn, tx);
+                await _refreshTokens.CreateAsync(new RefreshToken
+                {
+                    UserId    = user.Id,
+                    SessionId = stored.SessionId,
+                    TokenHash = newTokenHash,
+                    ExpiresAt = DateTime.UtcNow.AddDays(refreshExpiryDays)
+                }, conn, tx);
+                tx.Commit();
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+        }
 
         if (stored.SessionId.HasValue)
             await _sessions.UpdateLastActiveAtAsync(stored.SessionId.Value, DateTime.UtcNow);
