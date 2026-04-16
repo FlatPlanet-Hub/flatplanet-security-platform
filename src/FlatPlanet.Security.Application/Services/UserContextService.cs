@@ -1,3 +1,4 @@
+using FlatPlanet.Security.Application.Common.Exceptions;
 using FlatPlanet.Security.Application.DTOs.Authorization;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
@@ -48,6 +49,9 @@ public class UserContextService : IUserContextService
             .Where(r => r.AppId == app.Id)
             .Select(r => r.RoleId)
             .ToList();
+
+        if (!appRoleIds.Any())
+            throw new ForbiddenException($"User does not have access to application '{appSlug}'.");
 
         var appRoleNames = appRoleIds.Any()
             ? await _roles.GetNamesByIdsAsync(appRoleIds)
