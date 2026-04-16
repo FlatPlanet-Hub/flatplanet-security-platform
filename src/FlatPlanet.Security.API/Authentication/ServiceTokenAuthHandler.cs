@@ -46,12 +46,17 @@ public sealed class ServiceTokenAuthHandler : AuthenticationHandler<Authenticati
         // This Guid is a fixed identity for all server-to-server requests from HubApi.
         const string serviceIdentityId = "00000000-0000-0000-0000-000000000001";
 
+        var serviceName = Request.Headers.TryGetValue("X-Service-Name", out var sn)
+            ? sn.ToString()
+            : "unknown";
+
         var claims = new[]
         {
             new Claim(ClaimTypes.NameIdentifier, serviceIdentityId),
             new Claim(ClaimTypes.Name, "service"),
             new Claim(ClaimTypes.Role, "platform_owner"),
             new Claim(ClaimTypes.Role, "app_admin"),
+            new Claim("service_name", serviceName),
         };
 
         var identity = new ClaimsIdentity(claims, Scheme.Name);

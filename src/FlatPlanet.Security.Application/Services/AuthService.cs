@@ -7,6 +7,7 @@ using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Domain.Entities;
 using FlatPlanet.Security.Domain.Enums;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 
 namespace FlatPlanet.Security.Application.Services;
@@ -28,6 +29,7 @@ public class AuthService : IAuthService
     private readonly IPasswordResetTokenRepository _resetTokens;
     private readonly IEmailService _emailService;
     private readonly IAppRepository _apps;
+    private readonly IMemoryCache _cache;
     private readonly ILogger<AuthService> _logger;
 
     public AuthService(
@@ -46,6 +48,7 @@ public class AuthService : IAuthService
         IPasswordResetTokenRepository resetTokens,
         IEmailService emailService,
         IAppRepository apps,
+        IMemoryCache cache,
         ILogger<AuthService> logger)
     {
         _passwordHasher = passwordHasher;
@@ -63,6 +66,7 @@ public class AuthService : IAuthService
         _resetTokens = resetTokens;
         _emailService = emailService;
         _apps = apps;
+        _cache = cache;
         _logger = logger;
     }
 
@@ -131,17 +135,8 @@ public class AuthService : IAuthService
         if (company.Status != "active")
             throw new ForbiddenException($"Company account is {company.Status}.");
 
-        // Session limit check
-        var maxSessions = Cfg("max_concurrent_sessions", 3);
-        var activeSessions = await _sessions.CountActiveByUserAsync(user.Id);
-        if (activeSessions >= maxSessions)
-        {
-            var oldest = await _sessions.GetOldestActiveByUserAsync(user.Id);
-            if (oldest is not null)
-                await _sessions.EndSessionAsync(oldest.Id, "replaced");
-        }
-
-        // Create session + refresh token in a transaction
+        // Create session + refresh token in a transaction (with atomic session eviction)
+        var maxSessions       = Cfg("max_concurrent_sessions", 3);
         var absoluteTimeout    = Cfg("session_absolute_timeout_minutes", 480);
         var idleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30);
         var refreshExpiryDays  = Cfg("jwt_refresh_expiry_days", 7);
@@ -154,6 +149,8 @@ public class AuthService : IAuthService
         {
             try
             {
+                await _sessions.EvictOldestIfOverLimitAsync(user.Id, maxSessions, conn, tx);
+
                 session = await _sessions.CreateAsync(new Session
                 {
                     UserId = user.Id,
@@ -187,7 +184,6 @@ public class AuthService : IAuthService
         var accessToken = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
         var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
 
-        // Fire all post-login side-effects in parallel
         await Task.WhenAll(
             _auditLog.LogAsync(new AuthAuditLog
             {
@@ -233,7 +229,10 @@ public class AuthService : IAuthService
     public async Task LogoutAsync(Guid? sessionId, Guid userId, string? ipAddress)
     {
         if (sessionId.HasValue)
+        {
             await _sessions.EndSessionAsync(sessionId.Value, "logout");
+            _cache.Remove($"fp:sec:session:{sessionId.Value}");
+        }
         await _refreshTokens.RevokeAllByUserAsync(userId, "logout");
         await _auditLog.LogAsync(new AuthAuditLog
         {
@@ -257,39 +256,12 @@ public class AuthService : IAuthService
         if (stored is null)
             throw new UnauthorizedAccessException("Invalid or expired refresh token.");
 
-        // Case: token was recently rotated — grace period reuse detection
-        // stored IS the parent row — it already carries ReplacedByTokenPlain and RotatedAt
-        if (stored.Revoked && stored.RevokedReason == "rotated")
-        {
-            var graceSeconds = Cfg("refresh_token_grace_period_seconds", 30);
+        // Strict rotation: any revoked token is immediately invalid — no grace period
+        if (stored.Revoked)
+            throw new UnauthorizedAccessException("Invalid or expired refresh token.");
 
-            if (stored.RotatedAt is null ||
-                stored.RotatedAt.Value < DateTime.UtcNow.AddSeconds(-graceSeconds) ||
-                stored.ReplacedByTokenPlain is null)
-                throw new UnauthorizedAccessException("Invalid or expired refresh token.");
-
-            // Re-issue a fresh access token for the same user/session
-            var graceUser = await _users.GetByIdAsync(stored.UserId)
-                ?? throw new UnauthorizedAccessException("User not found.");
-
-            if (graceUser.Status != "active")
-                throw new ForbiddenException($"User account is {graceUser.Status}.");
-
-            var graceSessionId = stored.SessionId ?? Guid.Empty;
-            var gracePlatformRoles = await _roles.GetPlatformRoleNamesForUserAsync(graceUser.Id);
-            var graceAccessToken = await _jwt.IssueAccessTokenAsync(graceUser, graceSessionId, gracePlatformRoles);
-            var graceAccessExpiry = Cfg("jwt_access_expiry_minutes", 60);
-
-            return new RefreshResponse
-            {
-                AccessToken  = graceAccessToken,
-                RefreshToken = stored.ReplacedByTokenPlain,
-                ExpiresIn    = graceAccessExpiry * 60
-            };
-        }
-
-        // Case: token is revoked for any other reason, or expired
-        if (stored.Revoked || stored.ExpiresAt < DateTime.UtcNow)
+        // Case: token is expired
+        if (stored.ExpiresAt < DateTime.UtcNow)
             throw new UnauthorizedAccessException("Invalid or expired refresh token.");
 
         // Normal rotation path
@@ -301,18 +273,32 @@ public class AuthService : IAuthService
 
         var refreshExpiryDays = Cfg("jwt_refresh_expiry_days", 7);
 
-        // Generate new token FIRST, then rotate (order matters for grace period)
+        // Generate new token and atomically rotate old → new in a single transaction.
+        // Without a transaction, a CreateAsync failure after RotateAsync would leave the
+        // old token revoked and no new token existing — locking the user out.
         var (newTokenPlain, newTokenHash) = _jwt.GenerateRefreshToken();
 
-        await _refreshTokens.RotateAsync(stored.Id, newTokenHash, newTokenPlain);
-
-        await _refreshTokens.CreateAsync(new RefreshToken
+        using (var conn = await _db.CreateConnectionAsync())
+        using (var tx = conn.BeginTransaction())
         {
-            UserId    = user.Id,
-            SessionId = stored.SessionId,
-            TokenHash = newTokenHash,
-            ExpiresAt = DateTime.UtcNow.AddDays(refreshExpiryDays)
-        });
+            try
+            {
+                await _refreshTokens.RotateAsync(stored.Id, newTokenHash, conn, tx);
+                await _refreshTokens.CreateAsync(new RefreshToken
+                {
+                    UserId    = user.Id,
+                    SessionId = stored.SessionId,
+                    TokenHash = newTokenHash,
+                    ExpiresAt = DateTime.UtcNow.AddDays(refreshExpiryDays)
+                }, conn, tx);
+                tx.Commit();
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+        }
 
         if (stored.SessionId.HasValue)
             await _sessions.UpdateLastActiveAtAsync(stored.SessionId.Value, DateTime.UtcNow);
@@ -347,16 +333,24 @@ public class AuthService : IAuthService
         IEnumerable<AppAccessDto> appAccess = [];
         if (!string.IsNullOrEmpty(appSlug))
         {
-            var context = await _userContext.GetUserContextAsync(userId, appSlug);
-            appAccess =
-            [
-                new AppAccessDto
-                {
-                    AppSlug = appSlug,
-                    RoleName = string.Join(", ", context.Roles),
-                    Permissions = context.Permissions
-                }
-            ];
+            try
+            {
+                var context = await _userContext.GetUserContextAsync(userId, appSlug);
+                appAccess =
+                [
+                    new AppAccessDto
+                    {
+                        AppSlug = appSlug,
+                        RoleName = string.Join(", ", context.Roles),
+                        Permissions = context.Permissions
+                    }
+                ];
+            }
+            catch (ForbiddenException)
+            {
+                // User has no role in this app — return empty appAccess, not 403
+                appAccess = [];
+            }
         }
 
         return new UserProfileResponse
@@ -396,10 +390,13 @@ public class AuthService : IAuthService
 
         try
         {
+            var activeSessionIds = await _sessions.GetActiveSessionIdsByUserAsync(userId);
             await Task.WhenAll(
                 _sessions.EndAllActiveSessionsByUserAsync(userId, "password_changed"),
                 _refreshTokens.RevokeAllByUserAsync(userId, "password_changed")
             );
+            foreach (var sid in activeSessionIds)
+                _cache.Remove($"fp:sec:session:{sid}");
         }
         catch (Exception ex)
         {
@@ -446,7 +443,6 @@ public class AuthService : IAuthService
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Failed to send password reset email to {Email}", user.Email);
-                throw; // TEMP: surface SMTP error for diagnosis
             }
 
             try
@@ -524,10 +520,13 @@ public class AuthService : IAuthService
 
         try
         {
+            var activeSessionIds = await _sessions.GetActiveSessionIdsByUserAsync(token.UserId);
             await Task.WhenAll(
                 _sessions.EndAllActiveSessionsByUserAsync(token.UserId, "password_reset"),
                 _refreshTokens.RevokeAllByUserAsync(token.UserId, "password_reset")
             );
+            foreach (var sid in activeSessionIds)
+                _cache.Remove($"fp:sec:session:{sid}");
         }
         catch (Exception ex)
         {
@@ -550,5 +549,19 @@ public class AuthService : IAuthService
     }
 
     private async Task<Dictionary<string, string>> LoadConfigAsync()
-        => (await _securityConfig.GetAllAsync()).ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
+    {
+        const string cacheKey = "fp:sec:cfg:all";
+        if (_cache.TryGetValue(cacheKey, out Dictionary<string, string>? cached) && cached is not null)
+            return cached;
+
+        var configs = await _securityConfig.GetAllAsync();
+        var dict = configs.ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
+
+        _cache.Set(cacheKey, dict, new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
+        });
+
+        return dict;
+    }
 }

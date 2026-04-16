@@ -23,3 +23,17 @@ Thumbs.db
 
 # FlatPlanet workspace files — contain live tokens
 CLAUDE-local.md
+
+# Claude Code local settings — may contain tokens
+.claude/settings.local.json
+.claude/worktrees/
+node_modules/
+
+# Temp/noise files
+package.json
+package-lock.json
+*.json.tmp
+login.json
+
+# Build artifacts
+*.zip

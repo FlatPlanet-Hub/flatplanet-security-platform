@@ -9,4 +9,5 @@ public interface ICompanyRepository
     Task<Company> CreateAsync(Company company);
     Task UpdateAsync(Company company);
     Task UpdateStatusAsync(Guid id, string status);
+    Task UpdateStatusAsync(Guid id, string status, System.Data.IDbConnection conn, System.Data.IDbTransaction tx);
 }

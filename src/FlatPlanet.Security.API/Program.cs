@@ -1,5 +1,8 @@
+using System.Security.Claims;
 using System.Text;
+using System.Threading.RateLimiting;
 using FlatPlanet.Security.API.Authentication;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
 using FlatPlanet.Security.API.Middleware;
 using FlatPlanet.Security.Application.Common.Options;
@@ -7,7 +10,9 @@ using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
+using FlatPlanet.Security.Infrastructure.BackgroundServices;
 using FlatPlanet.Security.Infrastructure.Email;
+using FlatPlanet.Security.Infrastructure.ExternalServices;
 using FlatPlanet.Security.Infrastructure.Persistence;
 using FlatPlanet.Security.Infrastructure.Repositories;
 using FlatPlanet.Security.Infrastructure.Security;
@@ -30,6 +35,7 @@ builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptio
 builder.Services.Configure<ServiceTokenOptions>(builder.Configuration.GetSection(ServiceTokenOptions.Section));
 builder.Services.Configure<AppOptions>(builder.Configuration.GetSection(AppOptions.Section));
 builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection(SmtpOptions.Section));
+builder.Services.Configure<SmsOptions>(builder.Configuration.GetSection(SmsOptions.Section));
 
 // Database
 builder.Services.AddSingleton<IDbConnectionFactory>(
@@ -114,6 +120,45 @@ builder.Services.AddControllers()
             });
         };
     });
+builder.Services.AddMemoryCache();
+builder.Services.AddHttpContextAccessor();
+
+// Rate limiting
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    // forgot-password: 3 per 15 min per IP
+    options.AddPolicy("forgot-password", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 3,
+                Window = TimeSpan.FromMinutes(15)
+            }));
+
+    // change-password: 5 per 15 min per user (JWT sub claim)
+    options.AddPolicy("change-password", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(15)
+            }));
+
+    // authorize: 60 per min per user
+    options.AddPolicy("authorize", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1)
+            }));
+});
+
 builder.Services.AddHealthChecks();
 
 // Repositories
@@ -122,6 +167,7 @@ builder.Services.AddScoped<ISessionRepository, SessionRepository>();
 builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 builder.Services.AddScoped<ILoginAttemptRepository, LoginAttemptRepository>();
 builder.Services.AddScoped<IAuditLogRepository, AuditLogRepository>();
+builder.Services.AddScoped<IAdminAuditLogRepository, AdminAuditLogRepository>();
 builder.Services.AddScoped<ISecurityConfigRepository, SecurityConfigRepository>();
 builder.Services.AddScoped<IUserAppRoleRepository, UserAppRoleRepository>();
 builder.Services.AddScoped<IRolePermissionRepository, RolePermissionRepository>();
@@ -133,6 +179,8 @@ builder.Services.AddScoped<IResourceRepository, ResourceRepository>();
 builder.Services.AddScoped<IPermissionRepository, PermissionRepository>();
 builder.Services.AddScoped<IBusinessMembershipRepository, BusinessMembershipRepository>();
 builder.Services.AddScoped<IPasswordResetTokenRepository, PasswordResetTokenRepository>();
+builder.Services.AddScoped<IMfaChallengeRepository, MfaChallengeRepository>();
+builder.Services.AddScoped<IIdentityVerificationRepository, IdentityVerificationRepository>();
 
 // Services
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
@@ -154,6 +202,10 @@ builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
 builder.Services.AddScoped<IBusinessMembershipService, BusinessMembershipService>();
 builder.Services.AddScoped<IEmailService, SmtpEmailService>();
+builder.Services.AddScoped<ISmsSender, ConsoleSmsSender>(); // Swap to TwilioSmsSender once Sms credentials are configured
+builder.Services.AddScoped<IMfaService, MfaService>();
+builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationService>();
+builder.Services.AddHostedService<AuditLogCleanupService>();
 
 var app = builder.Build();
 
@@ -170,6 +222,7 @@ app.UseCors();
 app.UseAuthentication();
 app.UseMiddleware<SessionValidationMiddleware>();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 // OpenAPI spec endpoint + Scalar UI (dev-only is intentionally not enforced —
 // restrict via network/infra in production instead of compile-time env checks)

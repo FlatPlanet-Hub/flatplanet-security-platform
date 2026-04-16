@@ -1,6 +1,7 @@
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Services;
 using FlatPlanet.Security.Domain.Entities;
+using Microsoft.Extensions.Caching.Memory;
 using Moq;
 
 namespace FlatPlanet.Security.Tests;
@@ -13,10 +14,11 @@ public class UserContextServiceTests
     private readonly Mock<IRolePermissionRepository> _rolePermissions = new();
     private readonly Mock<IAppRepository> _apps = new();
     private readonly Mock<ICompanyRepository> _companies = new();
+    private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
 
     private UserContextService CreateService() => new(
         _users.Object, _userAppRoles.Object, _roles.Object,
-        _rolePermissions.Object, _apps.Object, _companies.Object);
+        _rolePermissions.Object, _apps.Object, _companies.Object, _cache);
 
     [Fact]
     public async Task GetUserContext_ShouldReturnRolesAndPermissions_WhenUserHasAccess()

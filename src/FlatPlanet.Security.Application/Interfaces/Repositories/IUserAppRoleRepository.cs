@@ -13,6 +13,8 @@ public interface IUserAppRoleRepository
     Task UpdateStatusAsync(Guid id, string status);
     Task UpdateRoleAsync(Guid id, Guid roleId);
     Task SuspendAllByUserAsync(Guid userId);
+    Task SuspendAllByUserAsync(Guid userId, System.Data.IDbConnection conn, System.Data.IDbTransaction tx);
+    Task SuspendAllByCompanyIdAsync(Guid companyId, System.Data.IDbConnection conn, System.Data.IDbTransaction tx);
     Task<IEnumerable<UserAppRole>> GetActiveByAppIdAsync(Guid appId);
     Task<bool> HasUsersAssignedAsync(Guid roleId);
     Task<IEnumerable<UserAppRoleDetail>> GetDetailsByUserIdAsync(Guid userId);

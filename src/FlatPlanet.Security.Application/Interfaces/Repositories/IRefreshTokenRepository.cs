@@ -10,7 +10,9 @@ public interface IRefreshTokenRepository
     Task<RefreshToken?> GetByTokenHashAsync(string tokenHash);
     Task RevokeAsync(Guid tokenId, string reason);
     Task RevokeAllByUserAsync(Guid userId, string reason);
+    Task RevokeAllByUserAsync(Guid userId, string reason, IDbConnection conn, IDbTransaction tx);
     Task RevokeAllByCompanyIdAsync(Guid companyId, string reason);
-    Task RotateAsync(Guid tokenId, string newTokenHash, string newTokenPlain);
-    Task<RefreshToken?> GetRecentlyRotatedAsync(string tokenHash, int graceWindowSeconds);
+    Task RevokeAllByCompanyIdAsync(Guid companyId, string reason, IDbConnection conn, IDbTransaction tx);
+    Task RotateAsync(Guid tokenId, string newTokenHash);
+    Task RotateAsync(Guid tokenId, string newTokenHash, IDbConnection conn, IDbTransaction tx);
 }
