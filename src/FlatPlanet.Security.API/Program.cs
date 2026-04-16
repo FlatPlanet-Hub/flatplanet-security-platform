@@ -8,9 +8,7 @@ using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
-using FlatPlanet.Security.Infrastructure.BackgroundServices;
 using FlatPlanet.Security.Infrastructure.Email;
-using FlatPlanet.Security.Infrastructure.ExternalServices;
 using FlatPlanet.Security.Infrastructure.Persistence;
 using FlatPlanet.Security.Infrastructure.Repositories;
 using FlatPlanet.Security.Infrastructure.Security;
@@ -34,7 +32,6 @@ builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptio
 builder.Services.Configure<ServiceTokenOptions>(builder.Configuration.GetSection(ServiceTokenOptions.Section));
 builder.Services.Configure<AppOptions>(builder.Configuration.GetSection(AppOptions.Section));
 builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection(SmtpOptions.Section));
-builder.Services.Configure<SmsOptions>(builder.Configuration.GetSection(SmsOptions.Section));
 
 // Database
 builder.Services.AddSingleton<IDbConnectionFactory>(
@@ -138,9 +135,6 @@ builder.Services.AddScoped<IResourceRepository, ResourceRepository>();
 builder.Services.AddScoped<IPermissionRepository, PermissionRepository>();
 builder.Services.AddScoped<IBusinessMembershipRepository, BusinessMembershipRepository>();
 builder.Services.AddScoped<IPasswordResetTokenRepository, PasswordResetTokenRepository>();
-builder.Services.AddScoped<IAdminAuditLogRepository, AdminAuditLogRepository>();
-builder.Services.AddScoped<IMfaChallengeRepository, MfaChallengeRepository>();
-builder.Services.AddScoped<IIdentityVerificationRepository, IdentityVerificationRepository>();
 
 // Services
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
@@ -162,22 +156,6 @@ builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
 builder.Services.AddScoped<IBusinessMembershipService, BusinessMembershipService>();
 builder.Services.AddScoped<IEmailService, SmtpEmailService>();
-builder.Services.AddHttpClient();
-builder.Services.AddHttpClient("twilio", (sp, client) =>
-{
-    var opts = sp.GetRequiredService<IOptions<SmsOptions>>().Value;
-    var creds = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{opts.AccountSid}:{opts.AuthToken}"));
-    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Basic", creds);
-});
-builder.Services.AddScoped<IMfaService, MfaService>();
-builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationService>();
-if (builder.Environment.IsDevelopment())
-    builder.Services.AddSingleton<ISmsSender, ConsoleSmsSender>();
-else
-    builder.Services.AddSingleton<ISmsSender, TwilioSmsSender>();
-builder.Services.AddMemoryCache();
-builder.Services.AddHttpContextAccessor();
-builder.Services.AddHostedService<AuditLogCleanupService>();
 
 var app = builder.Build();
 

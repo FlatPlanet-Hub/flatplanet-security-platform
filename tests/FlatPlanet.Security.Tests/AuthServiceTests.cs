@@ -32,15 +32,13 @@ public class AuthServiceTests
     private readonly Mock<IEmailService> _emailService = new();
     private readonly Mock<IAppRepository> _apps = new();
     private readonly Mock<ILogger<AuthService>> _logger = new();
-    private readonly Mock<IMfaService> _mfa = new();
 
     private AuthService CreateService() => new(
         _passwordHasher.Object, _jwt.Object, _users.Object,
         _sessions.Object, _refreshTokens.Object,
         _loginAttempts.Object, _auditLog.Object, _securityConfig.Object,
         _roles.Object, _db.Object, _companies.Object, _userContext.Object,
-        _resetTokens.Object, _emailService.Object, _apps.Object, _logger.Object,
-        _mfa.Object);
+        _resetTokens.Object, _emailService.Object, _apps.Object, _logger.Object);
 
     private void SetupDefaultConfig()
     {
