@@ -4,6 +4,8 @@ using FlatPlanet.Security.API.Middleware;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Domain.Entities;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.Logging;
 using Moq;
 
 namespace FlatPlanet.Security.Tests;
@@ -12,6 +14,7 @@ public class SessionValidationMiddlewareTests
 {
     private readonly Mock<ISessionRepository> _sessions = new();
     private readonly Mock<IAuditLogRepository> _auditLog = new();
+    private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
 
     private HttpContext BuildAuthenticatedContext(Guid sessionId, IServiceProvider services)
     {
@@ -56,7 +59,7 @@ public class SessionValidationMiddlewareTests
         _sessions.Setup(s => s.UpdateLastActiveAtAsync(sessionId, It.IsAny<DateTime>())).Returns(Task.CompletedTask);
 
         var nextCalled = false;
-        var middleware = new SessionValidationMiddleware(_ => { nextCalled = true; return Task.CompletedTask; });
+        var middleware = new SessionValidationMiddleware(_ => { nextCalled = true; return Task.CompletedTask; }, _cache);
         var context = BuildAuthenticatedContext(sessionId, BuildServices());
 
         // Act
@@ -86,7 +89,7 @@ public class SessionValidationMiddlewareTests
         _sessions.Setup(s => s.EndSessionAsync(sessionId, "idle_timeout")).Returns(Task.CompletedTask);
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
-        var middleware = new SessionValidationMiddleware(_ => Task.CompletedTask);
+        var middleware = new SessionValidationMiddleware(_ => Task.CompletedTask, _cache);
         var context = BuildAuthenticatedContext(sessionId, BuildServices());
 
         // Act
@@ -116,7 +119,7 @@ public class SessionValidationMiddlewareTests
         _sessions.Setup(s => s.EndSessionAsync(sessionId, "absolute_timeout")).Returns(Task.CompletedTask);
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
-        var middleware = new SessionValidationMiddleware(_ => Task.CompletedTask);
+        var middleware = new SessionValidationMiddleware(_ => Task.CompletedTask, _cache);
         var context = BuildAuthenticatedContext(sessionId, BuildServices());
 
         // Act

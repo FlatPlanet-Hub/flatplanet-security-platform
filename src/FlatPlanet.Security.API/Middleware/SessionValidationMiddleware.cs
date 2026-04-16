@@ -3,16 +3,19 @@ using System.Text.Json;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Domain.Entities;
 using FlatPlanet.Security.Domain.Enums;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace FlatPlanet.Security.API.Middleware;
 
 public class SessionValidationMiddleware
 {
     private readonly RequestDelegate _next;
+    private readonly IMemoryCache _cache;
 
-    public SessionValidationMiddleware(RequestDelegate next)
+    public SessionValidationMiddleware(RequestDelegate next, IMemoryCache cache)
     {
         _next = next;
+        _cache = cache;
     }
 
     public async Task InvokeAsync(HttpContext context)
@@ -26,7 +29,20 @@ public class SessionValidationMiddleware
                 var auditLog = context.RequestServices.GetRequiredService<IAuditLogRepository>();
                 var now = DateTime.UtcNow;
 
-                var session = await sessions.GetByIdAsync(sessionId);
+                var cacheKey = $"fp:sec:session:{sessionId}";
+
+                // Try cache first
+                if (!_cache.TryGetValue(cacheKey, out Session? session) || session is null)
+                {
+                    session = await sessions.GetByIdAsync(sessionId);
+                    if (session is not null)
+                    {
+                        _cache.Set(cacheKey, session, new MemoryCacheEntryOptions
+                        {
+                            AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30)
+                        });
+                    }
+                }
 
                 if (session == null || !session.IsActive)
                 {
@@ -37,12 +53,15 @@ public class SessionValidationMiddleware
                 if (session.ExpiresAt < now)
                 {
                     await sessions.EndSessionAsync(sessionId, "absolute_timeout");
+                    _cache.Remove(cacheKey);
+
                     await auditLog.LogAsync(new AuthAuditLog
                     {
                         UserId = session.UserId,
                         EventType = AuditEventType.SessionAbsoluteTimeout,
                         Details = JsonSerializer.Serialize(new { session_id = sessionId })
                     });
+
                     await WriteUnauthorizedAsync(context, "Session has expired.");
                     return;
                 }
@@ -50,17 +69,30 @@ public class SessionValidationMiddleware
                 if (session.LastActiveAt.AddMinutes(session.IdleTimeoutMinutes) < now)
                 {
                     await sessions.EndSessionAsync(sessionId, "idle_timeout");
+                    _cache.Remove(cacheKey);
+
                     await auditLog.LogAsync(new AuthAuditLog
                     {
                         UserId = session.UserId,
                         EventType = AuditEventType.SessionIdleTimeout,
                         Details = JsonSerializer.Serialize(new { session_id = sessionId })
                     });
+
                     await WriteUnauthorizedAsync(context, "Session has expired due to inactivity.");
                     return;
                 }
 
-                await sessions.UpdateLastActiveAtAsync(sessionId, now);
+                // Throttle last_active_at writes: only update if > 30 seconds since last update
+                if ((now - session.LastActiveAt).TotalSeconds > 30)
+                {
+                    await sessions.UpdateLastActiveAtAsync(sessionId, now);
+                    // Update cached session's LastActiveAt so idle timeout check stays accurate
+                    session.LastActiveAt = now;
+                    _cache.Set(cacheKey, session, new MemoryCacheEntryOptions
+                    {
+                        AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(30)
+                    });
+                }
             }
         }
 

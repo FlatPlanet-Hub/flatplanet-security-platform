@@ -1,6 +1,8 @@
-using System.Net.Http.Headers;
+using System.Security.Claims;
 using System.Text;
+using System.Threading.RateLimiting;
 using FlatPlanet.Security.API.Authentication;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
 using FlatPlanet.Security.API.Middleware;
 using FlatPlanet.Security.Application.Common.Options;
@@ -8,12 +10,12 @@ using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
+using FlatPlanet.Security.Infrastructure.BackgroundServices;
 using FlatPlanet.Security.Infrastructure.Email;
 using FlatPlanet.Security.Infrastructure.Persistence;
 using FlatPlanet.Security.Infrastructure.Repositories;
 using FlatPlanet.Security.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
-using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 
@@ -116,6 +118,44 @@ builder.Services.AddControllers()
             });
         };
     });
+builder.Services.AddMemoryCache();
+
+// Rate limiting
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+
+    // forgot-password: 3 per 15 min per IP
+    options.AddPolicy("forgot-password", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 3,
+                Window = TimeSpan.FromMinutes(15)
+            }));
+
+    // change-password: 5 per 15 min per user (JWT sub claim)
+    options.AddPolicy("change-password", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(15)
+            }));
+
+    // authorize: 60 per min per user
+    options.AddPolicy("authorize", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 60,
+                Window = TimeSpan.FromMinutes(1)
+            }));
+});
+
 builder.Services.AddHealthChecks();
 
 // Repositories
@@ -156,6 +196,7 @@ builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
 builder.Services.AddScoped<IBusinessMembershipService, BusinessMembershipService>();
 builder.Services.AddScoped<IEmailService, SmtpEmailService>();
+builder.Services.AddHostedService<AuditLogCleanupService>();
 
 var app = builder.Build();
 
@@ -172,6 +213,7 @@ app.UseCors();
 app.UseAuthentication();
 app.UseMiddleware<SessionValidationMiddleware>();
 app.UseAuthorization();
+app.UseRateLimiter();
 
 // OpenAPI spec endpoint + Scalar UI (dev-only is intentionally not enforced —
 // restrict via network/infra in production instead of compile-time env checks)

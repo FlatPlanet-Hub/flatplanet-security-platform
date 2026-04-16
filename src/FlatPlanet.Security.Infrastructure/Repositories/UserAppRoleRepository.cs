@@ -78,6 +78,26 @@ public class UserAppRoleRepository : IUserAppRoleRepository
             new { UserId = userId });
     }
 
+    public async Task SuspendAllByUserAsync(Guid userId, System.Data.IDbConnection conn, System.Data.IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            "UPDATE user_app_roles SET status = 'suspended' WHERE user_id = @UserId AND status = 'active'",
+            new { UserId = userId },
+            transaction: tx);
+    }
+
+    public async Task SuspendAllByCompanyIdAsync(Guid companyId, System.Data.IDbConnection conn, System.Data.IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            """
+            UPDATE user_app_roles SET status = 'suspended'
+            WHERE user_id IN (SELECT id FROM users WHERE company_id = @CompanyId)
+              AND status = 'active'
+            """,
+            new { CompanyId = companyId },
+            transaction: tx);
+    }
+
     public async Task<IEnumerable<UserAppRole>> GetActiveByAppIdAsync(Guid appId)
     {
         using var conn = await _db.CreateConnectionAsync();

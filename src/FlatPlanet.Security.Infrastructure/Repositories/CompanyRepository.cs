@@ -1,3 +1,4 @@
+using System.Data;
 using Dapper;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
@@ -50,5 +51,13 @@ public class CompanyRepository : ICompanyRepository
         await conn.ExecuteAsync(
             "UPDATE companies SET status = @Status WHERE id = @Id",
             new { Status = status, Id = id });
+    }
+
+    public async Task UpdateStatusAsync(Guid id, string status, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            "UPDATE companies SET status = @Status WHERE id = @Id",
+            new { Status = status, Id = id },
+            transaction: tx);
     }
 }

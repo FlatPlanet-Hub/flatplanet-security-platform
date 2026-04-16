@@ -112,12 +112,36 @@ public class UserRepository : IUserRepository
             new { Status = status, Id = userId });
     }
 
+    public async Task UpdateStatusAsync(Guid userId, string status, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            "UPDATE users SET status = @Status WHERE id = @Id",
+            new { Status = status, Id = userId },
+            transaction: tx);
+    }
+
     public async Task SuspendByCompanyIdAsync(Guid companyId)
     {
         using var conn = await _db.CreateConnectionAsync();
         await conn.ExecuteAsync(
             "UPDATE users SET status = 'suspended' WHERE company_id = @CompanyId AND status = 'active'",
             new { CompanyId = companyId });
+    }
+
+    public async Task SuspendByCompanyIdAsync(Guid companyId, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            "UPDATE users SET status = 'suspended' WHERE company_id = @CompanyId AND status = 'active'",
+            new { CompanyId = companyId },
+            transaction: tx);
+    }
+
+    public async Task DeactivateAllByCompanyIdAsync(Guid companyId, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            "UPDATE users SET status = 'inactive' WHERE company_id = @CompanyId AND status = 'active'",
+            new { CompanyId = companyId },
+            transaction: tx);
     }
 
     public async Task<User> CreateAsync(User user)

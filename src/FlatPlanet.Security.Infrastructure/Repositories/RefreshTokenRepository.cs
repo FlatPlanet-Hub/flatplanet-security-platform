@@ -74,6 +74,18 @@ public class RefreshTokenRepository : IRefreshTokenRepository
             new { Reason = reason, UserId = userId });
     }
 
+    public async Task RevokeAllByUserAsync(Guid userId, string reason, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            """
+            UPDATE refresh_tokens
+            SET revoked = true, revoked_at = now(), revoked_reason = @Reason
+            WHERE user_id = @UserId AND revoked = false
+            """,
+            new { Reason = reason, UserId = userId },
+            transaction: tx);
+    }
+
     public async Task RevokeAllByCompanyIdAsync(Guid companyId, string reason)
     {
         using var conn = await _db.CreateConnectionAsync();
@@ -87,7 +99,20 @@ public class RefreshTokenRepository : IRefreshTokenRepository
             new { Reason = reason, CompanyId = companyId });
     }
 
-    public async Task RotateAsync(Guid tokenId, string newTokenHash, string newTokenPlain)
+    public async Task RevokeAllByCompanyIdAsync(Guid companyId, string reason, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            """
+            UPDATE refresh_tokens
+            SET revoked = true, revoked_at = now(), revoked_reason = @Reason
+            WHERE user_id IN (SELECT id FROM users WHERE company_id = @CompanyId)
+              AND revoked = false
+            """,
+            new { Reason = reason, CompanyId = companyId },
+            transaction: tx);
+    }
+
+    public async Task RotateAsync(Guid tokenId, string newTokenHash)
     {
         using var conn = await _db.CreateConnectionAsync();
         await conn.ExecuteAsync(
@@ -97,25 +122,10 @@ public class RefreshTokenRepository : IRefreshTokenRepository
                 revoked_at              = now(),
                 revoked_reason          = 'rotated',
                 replaced_by_token_hash  = @NewTokenHash,
-                replaced_by_token_plain = @NewTokenPlain,
                 rotated_at              = now()
             WHERE id = @Id
             """,
-            new { Id = tokenId, NewTokenHash = newTokenHash, NewTokenPlain = newTokenPlain });
+            new { Id = tokenId, NewTokenHash = newTokenHash });
     }
 
-    public async Task<RefreshToken?> GetRecentlyRotatedAsync(string tokenHash, int graceWindowSeconds)
-    {
-        using var conn = await _db.CreateConnectionAsync();
-        return await conn.QuerySingleOrDefaultAsync<RefreshToken>(
-            """
-            SELECT * FROM refresh_tokens
-            WHERE replaced_by_token_hash = @TokenHash
-              AND revoked = true
-              AND revoked_reason = 'rotated'
-              AND rotated_at >= now() - (@GraceWindowSeconds || ' seconds')::interval
-            LIMIT 1
-            """,
-            new { TokenHash = tokenHash, GraceWindowSeconds = graceWindowSeconds });
-    }
 }

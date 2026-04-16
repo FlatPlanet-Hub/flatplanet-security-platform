@@ -1,5 +1,6 @@
 using System.Text.Json;
 using FlatPlanet.Security.Application.DTOs.Admin;
+using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Domain.Entities;
@@ -13,20 +14,26 @@ public class CompanyService : ICompanyService
     private readonly IUserRepository _users;
     private readonly IUserAppRoleRepository _userAppRoles;
     private readonly IRefreshTokenRepository _refreshTokens;
+    private readonly ISessionRepository _sessions;
     private readonly IAuditLogRepository _auditLog;
+    private readonly IDbConnectionFactory _db;
 
     public CompanyService(
         ICompanyRepository companies,
         IUserRepository users,
         IUserAppRoleRepository userAppRoles,
         IRefreshTokenRepository refreshTokens,
-        IAuditLogRepository auditLog)
+        ISessionRepository sessions,
+        IAuditLogRepository auditLog,
+        IDbConnectionFactory db)
     {
         _companies = companies;
         _users = users;
         _userAppRoles = userAppRoles;
         _refreshTokens = refreshTokens;
+        _sessions = sessions;
         _auditLog = auditLog;
+        _db = db;
     }
 
     public async Task<IEnumerable<CompanyResponse>> GetAllAsync()
@@ -71,34 +78,62 @@ public class CompanyService : ICompanyService
         _ = await _companies.GetByIdAsync(id)
             ?? throw new KeyNotFoundException("Company not found.");
 
-        await _companies.UpdateStatusAsync(id, status);
-
         if (status == "suspended")
         {
-            await _users.SuspendByCompanyIdAsync(id);
-            await _refreshTokens.RevokeAllByCompanyIdAsync(id, "company_suspended");
-
-            await _auditLog.LogAsync(new AuthAuditLog
+            using var conn = await _db.CreateConnectionAsync();
+            using var tx = conn.BeginTransaction();
+            try
             {
-                UserId = null,
-                EventType = AuditEventType.CompanySuspended,
-                Details = JsonSerializer.Serialize(new { company_id = id, status })
-            });
+                await _companies.UpdateStatusAsync(id, status, conn, tx);
+                await _users.SuspendByCompanyIdAsync(id, conn, tx);
+                await _refreshTokens.RevokeAllByCompanyIdAsync(id, "company_suspended", conn, tx);
+                await _sessions.EndAllActiveSessionsByCompanyIdAsync(id, "company_suspended", conn, tx);
+
+                await _auditLog.LogAsync(new AuthAuditLog
+                {
+                    UserId = null,
+                    EventType = AuditEventType.CompanySuspended,
+                    Details = JsonSerializer.Serialize(new { company_id = id, status })
+                }, conn, tx);
+
+                tx.Commit();
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
         }
         else if (status == "inactive")
         {
-            var users = await _users.GetByCompanyIdAsync(id);
-            await Task.WhenAll(users.Select(user => Task.WhenAll(
-                _userAppRoles.SuspendAllByUserAsync(user.Id),
-                _users.UpdateStatusAsync(user.Id, status)
-            )));
-
-            await _auditLog.LogAsync(new AuthAuditLog
+            using var conn = await _db.CreateConnectionAsync();
+            using var tx = conn.BeginTransaction();
+            try
             {
-                UserId = null,
-                EventType = AuditEventType.CompanyDeactivated,
-                Details = JsonSerializer.Serialize(new { company_id = id, status })
-            });
+                await _companies.UpdateStatusAsync(id, status, conn, tx);
+                await _users.DeactivateAllByCompanyIdAsync(id, conn, tx);
+                await _userAppRoles.SuspendAllByCompanyIdAsync(id, conn, tx);
+                await _refreshTokens.RevokeAllByCompanyIdAsync(id, "company_deactivated", conn, tx);
+                await _sessions.EndAllActiveSessionsByCompanyIdAsync(id, "company_deactivated", conn, tx);
+
+                await _auditLog.LogAsync(new AuthAuditLog
+                {
+                    UserId = null,
+                    EventType = AuditEventType.CompanyDeactivated,
+                    Details = JsonSerializer.Serialize(new { company_id = id, status })
+                }, conn, tx);
+
+                tx.Commit();
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+        }
+        else
+        {
+            await _companies.UpdateStatusAsync(id, status);
         }
     }
 

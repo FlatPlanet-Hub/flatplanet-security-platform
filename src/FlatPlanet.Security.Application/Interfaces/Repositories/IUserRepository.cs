@@ -14,7 +14,10 @@ public interface IUserRepository
     Task UpdateAsync(User user);
     Task UpdateLastSeenAtAsync(Guid userId, DateTime lastSeenAt);
     Task UpdateStatusAsync(Guid userId, string status);
+    Task UpdateStatusAsync(Guid userId, string status, IDbConnection conn, IDbTransaction tx);
     Task SuspendByCompanyIdAsync(Guid companyId);
+    Task SuspendByCompanyIdAsync(Guid companyId, IDbConnection conn, IDbTransaction tx);
+    Task DeactivateAllByCompanyIdAsync(Guid companyId, IDbConnection conn, IDbTransaction tx);
     Task<User> CreateAsync(User user);
     Task UpdatePasswordHashAsync(Guid userId, string passwordHash);
     Task UpdatePasswordHashAsync(Guid userId, string passwordHash, System.Data.IDbConnection conn, System.Data.IDbTransaction tx);

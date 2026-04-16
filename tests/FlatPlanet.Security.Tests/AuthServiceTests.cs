@@ -6,6 +6,7 @@ using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
 using FlatPlanet.Security.Domain.Entities;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -31,6 +32,7 @@ public class AuthServiceTests
     private readonly Mock<IPasswordResetTokenRepository> _resetTokens = new();
     private readonly Mock<IEmailService> _emailService = new();
     private readonly Mock<IAppRepository> _apps = new();
+    private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
     private readonly Mock<ILogger<AuthService>> _logger = new();
 
     private AuthService CreateService() => new(
@@ -38,7 +40,7 @@ public class AuthServiceTests
         _sessions.Object, _refreshTokens.Object,
         _loginAttempts.Object, _auditLog.Object, _securityConfig.Object,
         _roles.Object, _db.Object, _companies.Object, _userContext.Object,
-        _resetTokens.Object, _emailService.Object, _apps.Object, _logger.Object);
+        _resetTokens.Object, _emailService.Object, _apps.Object, _cache, _logger.Object);
 
     private void SetupDefaultConfig()
     {
@@ -287,7 +289,7 @@ public class AuthServiceTests
         _users.Setup(u => u.GetByIdAsync(userId))
             .ReturnsAsync(new User { Id = userId, Email = "user@test.com", FullName = "Test", Status = "active" });
         _jwt.Setup(j => j.GenerateRefreshToken()).Returns(("new-plain", "new-hash"));
-        _refreshTokens.Setup(r => r.RotateAsync(tokenId, "new-hash", "new-plain")).Returns(Task.CompletedTask);
+        _refreshTokens.Setup(r => r.RotateAsync(tokenId, "new-hash")).Returns(Task.CompletedTask);
         _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>()))
             .ReturnsAsync((RefreshToken t) => t);
         _roles.Setup(r => r.GetPlatformRoleNamesForUserAsync(userId)).ReturnsAsync(new List<string>());
@@ -302,7 +304,7 @@ public class AuthServiceTests
         // Assert
         Assert.Equal("new-access-token", result.AccessToken);
         Assert.Equal("new-plain", result.RefreshToken);
-        _refreshTokens.Verify(r => r.RotateAsync(tokenId, "new-hash", "new-plain"), Times.Once);
+        _refreshTokens.Verify(r => r.RotateAsync(tokenId, "new-hash"), Times.Once);
     }
 
     [Fact]

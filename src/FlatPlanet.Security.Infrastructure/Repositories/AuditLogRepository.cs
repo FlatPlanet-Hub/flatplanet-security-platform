@@ -25,6 +25,17 @@ public class AuditLogRepository : IAuditLogRepository
             entry);
     }
 
+    public async Task LogAsync(AuthAuditLog entry, System.Data.IDbConnection conn, System.Data.IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            """
+            INSERT INTO auth_audit_log (user_id, app_id, event_type, ip_address, user_agent, details)
+            VALUES (@UserId, @AppId, @EventType, @IpAddress, @UserAgent, @Details::jsonb)
+            """,
+            entry,
+            transaction: tx);
+    }
+
     public async Task<(IEnumerable<AuthAuditLog> Items, int TotalCount)> QueryAsync(
         Guid? userId, Guid? appId, string? eventType,
         DateTime? from, DateTime? to,
