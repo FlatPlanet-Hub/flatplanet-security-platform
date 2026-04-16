@@ -3,6 +3,7 @@ using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
 using FlatPlanet.Security.Application.Common.Options;
+using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Domain.Entities;
 using Microsoft.Extensions.Options;
@@ -13,13 +14,15 @@ namespace FlatPlanet.Security.Application.Services;
 public class JwtService : IJwtService
 {
     private readonly JwtOptions _options;
+    private readonly IBusinessMembershipRepository _businessMembershipRepo;
 
-    public JwtService(IOptions<JwtOptions> options)
+    public JwtService(IOptions<JwtOptions> options, IBusinessMembershipRepository businessMembershipRepo)
     {
         _options = options.Value;
+        _businessMembershipRepo = businessMembershipRepo;
     }
 
-    public string IssueAccessToken(User user, Guid sessionId, IEnumerable<string> roles)
+    public async Task<string> IssueAccessTokenAsync(User user, Guid sessionId, IEnumerable<string> roles)
     {
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.SecretKey));
         var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
@@ -38,6 +41,13 @@ public class JwtService : IJwtService
 
         foreach (var role in roles)
             claims.Add(new Claim(ClaimTypes.Role, role));
+
+        var memberships = await _businessMembershipRepo.GetActiveByUserIdAsync(user.Id);
+        foreach (var m in memberships.Where(m => m.BusinessCode != null))
+        {
+            claims.Add(new Claim("business_codes", m.BusinessCode!));
+            claims.Add(new Claim("business_ids", m.CompanyId.ToString()));
+        }
 
         var token = new JwtSecurityToken(
             issuer: _options.Issuer,

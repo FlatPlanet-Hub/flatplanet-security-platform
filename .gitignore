@@ -1,6 +1,9 @@
 # Build outputs
 bin/
 obj/
+publish/
+publish_sp/
+publish_sp.zip
 
 # User-specific files
 *.user
@@ -14,9 +17,14 @@ appsettings.Development.json
 # Rider / JetBrains
 .idea/
 
-# Agent working files
-Agents/
-
 # OS
 .DS_Store
 Thumbs.db
+
+# FlatPlanet workspace files — contain live tokens
+CLAUDE-local.md
+
+# Claude Code local settings — may contain tokens
+.claude/settings.local.json
+.claude/worktrees/
+node_modules/

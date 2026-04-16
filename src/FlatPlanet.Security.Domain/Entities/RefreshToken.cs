@@ -11,4 +11,7 @@ public class RefreshToken
     public DateTime? RevokedAt { get; set; }
     public string? RevokedReason { get; set; }
     public DateTime CreatedAt { get; set; }
+    public string? ReplacedByTokenHash { get; set; }
+    public string? ReplacedByTokenPlain { get; set; }
+    public DateTime? RotatedAt { get; set; }
 }

@@ -243,7 +243,7 @@ public class MfaService : IMfaService
         }
 
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
-        var accessToken   = _jwt.IssueAccessToken(user, session.Id, platformRoles);
+        var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
 
         await _auditLog.LogAsync(new AuthAuditLog
         {

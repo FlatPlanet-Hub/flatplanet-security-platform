@@ -33,6 +33,10 @@ db/
   V4__session_idle_timeout.sql
   V5__standalone_auth.sql
   V6__remove_registered_by_fk.sql
+  V11__drop_granted_by_fk.sql
+  V12__view_projects_permission.sql
+  V13__role_permissions_fk_drop.sql
+  V14__business_membership.sql
   seed_test_data.sql
 docs/
   api-reference.md                  # Complete endpoint + payload reference
@@ -81,6 +85,14 @@ Copy `appsettings.json` and fill in your values:
   },
   "Cors": {
     "AllowedOrigins": ["https://your-frontend.com"]
+  },
+  "Smtp": {
+    "Host": "smtp.your-provider.com",
+    "Port": 587,
+    "Username": "your-smtp-username",
+    "Password": "your-smtp-password",
+    "FromAddress": "noreply@your-domain.com",
+    "FromName": "FlatPlanet Security"
   }
 }
 ```
@@ -98,6 +110,10 @@ db/V3__rls_fixes.sql
 db/V4__session_idle_timeout.sql
 db/V5__standalone_auth.sql
 db/V6__remove_registered_by_fk.sql
+db/V11__drop_granted_by_fk.sql
+db/V12__view_projects_permission.sql
+db/V13__role_permissions_fk_drop.sql
+db/V14__business_membership.sql
 ```
 
 Optionally seed test data:
@@ -146,14 +162,60 @@ Authorization: Bearer <accessToken>
 
 Sessions are enforced by middleware on every request — idle and absolute timeouts are configurable via the security config API.
 
+**Password self-service**
+
+Users can change their password or reset a forgotten one without admin involvement:
+
+```
+POST /api/v1/auth/change-password   → change password (JWT required); revokes all sessions on success
+POST /api/v1/auth/forgot-password   → send reset link to email (no auth required)
+POST /api/v1/auth/reset-password    → consume reset token and set new password (no auth required)
+```
+
+Reset tokens expire in 15 minutes and are single-use. A SHA-256 hash is stored — the raw token is never persisted. SMTP must be configured under the `Smtp` section in `appsettings.json` for reset emails to be delivered.
+
 **Server-to-server (Service Token)**
 
 Backend services (e.g. HubApi) authenticate using a static bearer token configured in `appsettings.json` under `ServiceToken.Token`. The service token grants full `platform_owner` + `app_admin` access. Set a minimum 32-character secret and keep it out of source control.
 
 ---
 
+## Business Membership
+
+Users can belong to more than one company simultaneously. Memberships are tracked in the `user_business_memberships` table and are surfaced in the JWT.
+
+### JWT — `business_codes` claim
+
+Every access token now includes a `business_codes` array listing the short code of each company the user is an active member of:
+
+```json
+{
+  "sub": "dc88786a-...",
+  "email": "chris.moriarty@flatplanet.com",
+  "business_codes": ["fp"]
+}
+```
+
+Downstream services (e.g. HubApi) can use this claim to restrict file or resource access to the user's companies without an additional API call.
+
+### Membership Endpoints
+
+All membership endpoints require the `PlatformOwner` role.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/v1/companies/{companyId}/members` | List all members of a company |
+| `POST` | `/api/v1/companies/{companyId}/members` | Add a user to a company |
+| `DELETE` | `/api/v1/companies/{companyId}/members/{userId}` | Remove a user from a company |
+
+### Company `code` field
+
+Companies now carry an optional short `code` identifier (e.g. `"fp"`). The `code` is returned by `GET /api/v1/companies/{id}` and accepted by `POST /api/v1/companies` and `PUT /api/v1/companies/{id}`.
+
+---
+
 ## Documentation
 
-- **[API Reference](docs/security-api-reference.md)** — all 42 endpoints with request/response schemas, field tables, error cases
+- **[API Reference](docs/security-api-reference.md)** — all 49 endpoints with request/response schemas, field tables, error cases
 - **[Changelog](CHANGELOG.md)** — full version history
 - **[Feature Spec](docs/Feature.md)** — complete feature specification and requirements

@@ -23,6 +23,9 @@ public static class AuditEventType
     public const string UserAnonymized = "user_anonymized";
     public const string CompanySuspended = "company_suspended";
     public const string CompanyDeactivated = "company_deactivated";
+    public const string PasswordChanged = "password_changed";
+    public const string PasswordResetRequested = "password_reset_requested";
+    public const string PasswordResetCompleted = "password_reset_completed";
     public const string MfaOtpIssued = "mfa_otp_issued";
     public const string MfaVerified = "mfa_verified";
     public const string MfaFailed = "mfa_failed";

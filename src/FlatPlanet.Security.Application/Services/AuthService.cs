@@ -1,11 +1,13 @@
 using System.Text.Json;
 using FlatPlanet.Security.Application.Common.Exceptions;
+using FlatPlanet.Security.Application.Common.Helpers;
 using FlatPlanet.Security.Application.DTOs.Auth;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Domain.Entities;
 using FlatPlanet.Security.Domain.Enums;
+using Microsoft.Extensions.Logging;
 
 namespace FlatPlanet.Security.Application.Services;
 
@@ -23,6 +25,10 @@ public class AuthService : IAuthService
     private readonly IDbConnectionFactory _db;
     private readonly ICompanyRepository _companies;
     private readonly IUserContextService _userContext;
+    private readonly IPasswordResetTokenRepository _resetTokens;
+    private readonly IEmailService _emailService;
+    private readonly IAppRepository _apps;
+    private readonly ILogger<AuthService> _logger;
     private readonly IMfaService _mfa;
 
     public AuthService(
@@ -38,6 +44,10 @@ public class AuthService : IAuthService
         IDbConnectionFactory db,
         ICompanyRepository companies,
         IUserContextService userContext,
+        IPasswordResetTokenRepository resetTokens,
+        IEmailService emailService,
+        IAppRepository apps,
+        ILogger<AuthService> logger,
         IMfaService mfa)
     {
         _passwordHasher = passwordHasher;
@@ -52,6 +62,10 @@ public class AuthService : IAuthService
         _db = db;
         _companies = companies;
         _userContext = userContext;
+        _resetTokens = resetTokens;
+        _emailService = emailService;
+        _apps = apps;
+        _logger = logger;
         _mfa = mfa;
     }
 
@@ -180,7 +194,7 @@ public class AuthService : IAuthService
         }
 
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
-        var accessToken = _jwt.IssueAccessToken(user, session.Id, platformRoles);
+        var accessToken = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
         var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
 
         // Fire all post-login side-effects in parallel
@@ -215,6 +229,7 @@ public class AuthService : IAuthService
             AccessToken = accessToken,
             RefreshToken = refreshTokenPlain,
             ExpiresIn = accessExpiryMinutes * 60,
+            IdleTimeoutMinutes = idleTimeoutMinutes,
             User = new UserProfileDto
             {
                 UserId = user.Id,
@@ -248,9 +263,46 @@ public class AuthService : IAuthService
         var tokenHash = _jwt.HashToken(request.RefreshToken);
         var stored = await _refreshTokens.GetByTokenHashAsync(tokenHash);
 
-        if (stored is null || stored.Revoked || stored.ExpiresAt < DateTime.UtcNow)
+        // Case: token not found at all
+        if (stored is null)
             throw new UnauthorizedAccessException("Invalid or expired refresh token.");
 
+        // Case: token was recently rotated — grace period reuse detection
+        // stored IS the parent row — it already carries ReplacedByTokenPlain and RotatedAt
+        if (stored.Revoked && stored.RevokedReason == "rotated")
+        {
+            var graceSeconds = Cfg("refresh_token_grace_period_seconds", 30);
+
+            if (stored.RotatedAt is null ||
+                stored.RotatedAt.Value < DateTime.UtcNow.AddSeconds(-graceSeconds) ||
+                stored.ReplacedByTokenPlain is null)
+                throw new UnauthorizedAccessException("Invalid or expired refresh token.");
+
+            // Re-issue a fresh access token for the same user/session
+            var graceUser = await _users.GetByIdAsync(stored.UserId)
+                ?? throw new UnauthorizedAccessException("User not found.");
+
+            if (graceUser.Status != "active")
+                throw new ForbiddenException($"User account is {graceUser.Status}.");
+
+            var graceSessionId = stored.SessionId ?? Guid.Empty;
+            var gracePlatformRoles = await _roles.GetPlatformRoleNamesForUserAsync(graceUser.Id);
+            var graceAccessToken = await _jwt.IssueAccessTokenAsync(graceUser, graceSessionId, gracePlatformRoles);
+            var graceAccessExpiry = Cfg("jwt_access_expiry_minutes", 60);
+
+            return new RefreshResponse
+            {
+                AccessToken  = graceAccessToken,
+                RefreshToken = stored.ReplacedByTokenPlain,
+                ExpiresIn    = graceAccessExpiry * 60
+            };
+        }
+
+        // Case: token is revoked for any other reason, or expired
+        if (stored.Revoked || stored.ExpiresAt < DateTime.UtcNow)
+            throw new UnauthorizedAccessException("Invalid or expired refresh token.");
+
+        // Normal rotation path
         var user = await _users.GetByIdAsync(stored.UserId)
             ?? throw new UnauthorizedAccessException("User not found.");
 
@@ -259,12 +311,14 @@ public class AuthService : IAuthService
 
         var refreshExpiryDays = Cfg("jwt_refresh_expiry_days", 7);
 
-        await _refreshTokens.RevokeAsync(stored.Id, "rotated");
-
+        // Generate new token FIRST, then rotate (order matters for grace period)
         var (newTokenPlain, newTokenHash) = _jwt.GenerateRefreshToken();
+
+        await _refreshTokens.RotateAsync(stored.Id, newTokenHash, newTokenPlain);
+
         await _refreshTokens.CreateAsync(new RefreshToken
         {
-            UserId = user.Id,
+            UserId    = user.Id,
             SessionId = stored.SessionId,
             TokenHash = newTokenHash,
             ExpiresAt = DateTime.UtcNow.AddDays(refreshExpiryDays)
@@ -275,21 +329,21 @@ public class AuthService : IAuthService
 
         var sessionId = stored.SessionId ?? Guid.Empty;
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
-        var accessToken = _jwt.IssueAccessToken(user, sessionId, platformRoles);
+        var accessToken = await _jwt.IssueAccessTokenAsync(user, sessionId, platformRoles);
         var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
 
         await _auditLog.LogAsync(new AuthAuditLog
         {
-            UserId = user.Id,
+            UserId    = user.Id,
             EventType = AuditEventType.TokenRefresh,
             IpAddress = ipAddress
         });
 
         return new RefreshResponse
         {
-            AccessToken = accessToken,
+            AccessToken  = accessToken,
             RefreshToken = newTokenPlain,
-            ExpiresIn = accessExpiryMinutes * 60
+            ExpiresIn    = accessExpiryMinutes * 60
         };
     }
 
@@ -327,6 +381,182 @@ public class AuthService : IAuthService
             PlatformRoles = platformRoles,
             AppAccess = appAccess
         };
+    }
+
+    public async Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request, string? ipAddress)
+    {
+        var user = await _users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        if (!_passwordHasher.Verify(request.CurrentPassword, user.PasswordHash))
+            throw new ArgumentException("Current password is incorrect.");
+
+        var (isValid, errorMessage) = PasswordPolicyValidator.Validate(request.NewPassword);
+        if (!isValid)
+            throw new ArgumentException(errorMessage);
+
+        if (request.NewPassword != request.ConfirmPassword)
+            throw new ArgumentException("Passwords do not match.");
+
+        if (_passwordHasher.Verify(request.NewPassword, user.PasswordHash))
+            throw new ArgumentException("New password must be different from the current password.");
+
+        var newHash = _passwordHasher.Hash(request.NewPassword);
+        await _users.UpdatePasswordHashAsync(userId, newHash);
+
+        try
+        {
+            await Task.WhenAll(
+                _sessions.EndAllActiveSessionsByUserAsync(userId, "password_changed"),
+                _refreshTokens.RevokeAllByUserAsync(userId, "password_changed")
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to revoke sessions/tokens after password change for user {UserId}", userId);
+        }
+
+        await _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId = userId,
+            EventType = AuditEventType.PasswordChanged,
+            IpAddress = ipAddress
+        });
+    }
+
+    public async Task ForgotPasswordAsync(ForgotPasswordRequest request)
+    {
+        var user = await _users.GetByEmailAsync(request.Email);
+        if (user is null)
+            return;
+
+        var app = await _apps.GetBySlugAsync(request.AppSlug);
+        if (app is null)
+            return;
+
+        try
+        {
+            var plain = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(plain))).ToLowerInvariant();
+
+            await _resetTokens.InvalidatePendingByUserAsync(user.Id);
+            await _resetTokens.CreateAsync(new PasswordResetToken
+            {
+                UserId = user.Id,
+                TokenHash = hash,
+                ExpiresAt = DateTime.UtcNow.AddMinutes(15)
+            });
+
+            var link = $"{app.BaseUrl.TrimEnd('/')}/reset-password?token={plain}";
+
+            try
+            {
+                await _emailService.SendPasswordResetEmailAsync(user.Email, link);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to send password reset email to {Email}", user.Email);
+                throw; // TEMP: surface SMTP error for diagnosis
+            }
+
+            try
+            {
+                await _auditLog.LogAsync(new AuthAuditLog
+                {
+                    UserId = user.Id,
+                    EventType = AuditEventType.PasswordResetRequested
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Audit log failed for PasswordResetRequested user {UserId}", user.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "ForgotPasswordAsync failed for user {UserId} — token not created", user.Id);
+            // Still return 200 — never reveal whether email exists or not
+        }
+    }
+
+    public async Task ResetPasswordAsync(ResetPasswordRequest request, string? ipAddress)
+    {
+        // Validate inputs FIRST — before any DB call
+        var (isValid, errorMessage) = PasswordPolicyValidator.Validate(request.NewPassword);
+        if (!isValid)
+            throw new ArgumentException(errorMessage);
+
+        if (request.NewPassword != request.ConfirmPassword)
+            throw new ArgumentException("Passwords do not match.");
+
+        // Token lookup — map any DB error to a generic invalid-token response
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(request.Token))).ToLowerInvariant();
+
+        PasswordResetToken token;
+        try
+        {
+            token = await _resetTokens.GetValidByTokenHashAsync(hash)
+                ?? throw new ArgumentException("Reset token is invalid or has expired.");
+        }
+        catch (ArgumentException)
+        {
+            throw; // re-throw the "invalid or expired" message as-is
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Token lookup failed in ResetPasswordAsync");
+            throw new ArgumentException("Reset token is invalid or has expired.");
+        }
+
+        var user = await _users.GetByIdAsync(token.UserId)
+            ?? throw new KeyNotFoundException("User account no longer exists.");
+
+        if (_passwordHasher.Verify(request.NewPassword, user.PasswordHash))
+            throw new ArgumentException("New password must be different from your current password.");
+
+        var newHash = _passwordHasher.Hash(request.NewPassword);
+
+        using (var conn = await _db.CreateConnectionAsync())
+        using (var tx = conn.BeginTransaction())
+        {
+            try
+            {
+                await _resetTokens.MarkAsUsedAsync(token.Id, conn, tx);
+                await _users.UpdatePasswordHashAsync(token.UserId, newHash, conn, tx);
+                tx.Commit();
+            }
+            catch
+            {
+                tx.Rollback();
+                throw;
+            }
+        }
+
+        try
+        {
+            await Task.WhenAll(
+                _sessions.EndAllActiveSessionsByUserAsync(token.UserId, "password_reset"),
+                _refreshTokens.RevokeAllByUserAsync(token.UserId, "password_reset")
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to revoke sessions/tokens after password reset for user {UserId}", token.UserId);
+        }
+
+        try
+        {
+            await _auditLog.LogAsync(new AuthAuditLog
+            {
+                UserId = token.UserId,
+                EventType = AuditEventType.PasswordResetCompleted,
+                IpAddress = ipAddress
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Audit log failed for PasswordResetCompleted user {UserId}", token.UserId);
+        }
     }
 
     private async Task<Dictionary<string, string>> LoadConfigAsync()

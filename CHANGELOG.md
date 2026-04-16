@@ -4,6 +4,72 @@ All notable changes to the FlatPlanet Security Platform are documented here.
 
 ---
 
+## [1.4.0] — 2026-04-13
+
+Password self-service — change password and forgot/reset password flows.
+
+---
+
+### Added
+
+- **FEAT-CP — Change Password** — `POST /api/v1/auth/change-password` allows authenticated users to change their own password. Requires the current password for verification. On success, all sessions and refresh tokens are revoked, forcing a full re-login. Returns HTTP 200 `{ success: true, message: "Password changed. Please log in again." }`.
+- **FEAT-FP — Forgot Password** — `POST /api/v1/auth/forgot-password` initiates a password reset flow by emailing a time-limited reset link to the supplied address. Response is identical whether or not the email exists (prevents user enumeration).
+- **FEAT-FP — Reset Password** — `POST /api/v1/auth/reset-password` consumes the single-use token from the reset link, sets a new password, and revokes all sessions and refresh tokens. Token expires in 15 minutes and is SHA-256 hashed in storage (never stored as plaintext).
+- **Password policy enforcement** — applied to both change-password and reset-password: minimum 8 characters, at least one uppercase, one lowercase, one digit, and one special character (`!@#$%^&*()_+-=[]{}|;':",./<>?`).
+- **DB migration V15** — adds `password_reset_tokens` table (`user_id` FK, `token_hash`, `expires_at`, `used_at`).
+- **DB migration V16** — cleanup of test/sample apps and related stored-procedure data.
+- **SMTP configuration** — `Smtp` section added to `appsettings.json` / Azure App Config for outbound reset-link email delivery.
+
+### New Endpoints
+
+- **`POST /api/v1/auth/change-password`** — change own password (JWT required). Body: `{ currentPassword, newPassword, confirmPassword }`.
+- **`POST /api/v1/auth/forgot-password`** — request a reset link (no auth). Body: `{ email }`.
+- **`POST /api/v1/auth/reset-password`** — complete reset with token (no auth). Body: `{ token, newPassword, confirmPassword }`.
+
+---
+
+## [1.3.0] — 2026-04-10
+
+Multi-business membership support and JWT `business_codes` claim.
+
+---
+
+### Added
+
+- **FEAT-SP-BIZ-01 — Multi-business membership** — Users can belong to multiple companies simultaneously via the new `user_business_memberships` table. Membership records carry a `role` and `status` field.
+- **`companies.code` column** — new short identifier column (e.g. `"fp"`) on the `companies` table; returned on `GET /api/v1/companies/{id}` and accepted on `POST` / `PUT /api/v1/companies/{id}`.
+- **`business_codes` JWT claim** — access tokens now include a `business_codes` array claim listing all company codes the user is an active member of (e.g. `["fp"]`). Downstream services can use this claim for tenant routing without an additional API call.
+- **DB migration V14** — creates `user_business_memberships` table; adds `code` column to `companies`.
+
+### New Endpoints
+
+- **`GET /api/v1/companies/{companyId}/members`** — list all members of a company (requires `PlatformOwner` role).
+- **`POST /api/v1/companies/{companyId}/members`** — add a user to a company with a specified role (requires `PlatformOwner` role). Body: `{ userId, role }`.
+- **`DELETE /api/v1/companies/{companyId}/members/{userId}`** — remove a user from a company (requires `PlatformOwner` role).
+
+### Changed
+
+- **`GET /api/v1/companies/{id}`** — response now includes `code` field.
+- **`POST /api/v1/companies`** — now accepts optional `code` field.
+- **`PUT /api/v1/companies/{id}`** — now accepts optional `code` field.
+
+---
+
+## [1.2.2] — 2026-04-01
+
+DB constraint fixes and permission seeding for dashboard-hub.
+
+---
+
+### Fixes
+
+- **Fix: re-grant upsert (BUG-01)** — `POST /api/v1/apps/{appId}/users` now upserts instead of plain INSERT; re-granting a previously revoked user reactivates the existing row instead of returning `409` (PR #29)
+- **DB: V11 migration** — drops `granted_by` FK constraint and NOT NULL on `user_app_roles`; `UserAppRole.GrantedBy` updated to `Guid?`; service-token callers (sentinel GUID) no longer require a matching users row (PR #30)
+- **DB: V12 migration** — seeds `view_projects` permission for `dashboard-hub`; grants to all dashboard-hub app roles and to `platform_owner` platform role; idempotent via `ON CONFLICT DO NOTHING` (PR #31)
+- **DB: V13 migration** — drops `granted_by` FK constraint and NOT NULL on `role_permissions` (mirrors V11); re-runs V12 role_permissions grants which had failed due to the NOT NULL constraint (PR #33)
+
+---
+
 ## [1.2.1] — 2026-03-27
 
 Validation envelope fix, ServiceToken registration, and seed data cleanup.

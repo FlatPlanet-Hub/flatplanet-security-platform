@@ -1,6 +1,6 @@
 # FlatPlanet Security Platform — API Reference
 
-**Version**: 1.2.1
+**Version**: 1.5.0
 **Base URL**: `https://<your-host>/api/v1`
 **Content-Type**: `application/json`
 **Auth**: Bearer JWT or Service Token in `Authorization` header
@@ -138,6 +138,7 @@ Verifies credentials against the platform's database (bcrypt, work factor 12). I
     "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "refreshToken": "v2.local.abc123...",
     "expiresIn": 3600,
+    "idleTimeoutMinutes": 30,
     "user": {
       "userId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
       "email": "alice@acme.com",
@@ -153,6 +154,7 @@ Verifies credentials against the platform's database (bcrypt, work factor 12). I
 | `accessToken` | string | JWT. Lifetime = `jwt_access_expiry_minutes` × 60 seconds. |
 | `refreshToken` | string | Opaque token. Store securely. Single-use (rotated on each refresh). |
 | `expiresIn` | integer | Access token lifetime in **seconds**. |
+| `idleTimeoutMinutes` | integer | Session idle timeout in **minutes**. Session is invalidated if no authenticated request arrives within this window. Use this to schedule heartbeats — fire at `idleTimeoutMinutes × 0.5` minutes. |
 | `user.userId` | UUID | Use this as the user identifier in downstream calls. |
 | `user.companyId` | string | UUID as string. |
 
@@ -174,6 +176,34 @@ Verifies credentials against the platform's database (bcrypt, work factor 12). I
 - On success, the oldest session is evicted if `max_concurrent_sessions` is reached.
 - Refresh tokens are single-use. Using a refresh token invalidates it and issues a new one.
 - The `appSlug` field does not affect authentication — it only enriches the response. A missing or invalid slug does not cause a failure on login.
+
+#### JWT Claims Structure
+
+The decoded access token payload includes:
+
+| Claim | Type | Description |
+|---|---|---|
+| `sub` | UUID string | User ID |
+| `name` | string | Full name |
+| `email` | string | Email address |
+| `app_slug` | string | App slug the token was issued for (if `appSlug` was provided at login) |
+| `permissions` | string | Comma-separated permission list for this app (e.g. `"read,write"`) |
+| `business_codes` | string or string[] | Short business code(s) the user belongs to (e.g. `"fp"` or `["fp","acme"]`). Single membership serializes as a plain string, not an array. |
+| `business_ids` | string or string[] | UUID(s) of the business(es) the user belongs to, parallel-indexed with `business_codes`. Single membership serializes as a plain string. |
+| `exp` | integer | Unix expiry timestamp |
+| `iss` | string | Token issuer (`flatplanet-security`) |
+| `aud` | string | Token audience (`flatplanet-apps`) |
+
+> **Important — normalization**: `business_codes` and `business_ids` may be a plain string (single membership) or a string array (multiple memberships). Always normalize before use:
+> ```js
+> const codes = Array.isArray(jwt.business_codes)
+>   ? jwt.business_codes
+>   : jwt.business_codes ? [jwt.business_codes] : [];
+> const ids = Array.isArray(jwt.business_ids)
+>   ? jwt.business_ids
+>   : jwt.business_ids ? [jwt.business_ids] : [];
+> // codes[i] and ids[i] always refer to the same business.
+> ```
 
 ---
 
@@ -303,6 +333,186 @@ GET /api/v1/auth/me?appSlug=dashboard-hub
 
 - `appAccess` is empty (`[]`) when `appSlug` is not provided or the user has no role in that app.
 - `platformRoles` reflects roles defined directly on the platform (e.g. `app_admin`, `platform_owner`).
+
+---
+
+### POST /api/v1/auth/change-password
+
+Changes the authenticated user's password. On success, all sessions and refresh tokens for the user are revoked, forcing a full re-login.
+
+**Auth required**: Yes (Bearer JWT)
+
+#### Request
+
+```json
+{
+  "currentPassword": "OldP@ss1!",
+  "newPassword": "NewP@ss2!",
+  "confirmPassword": "NewP@ss2!"
+}
+```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `currentPassword` | string | Yes | The user's existing password. Verified against the stored bcrypt hash. |
+| `newPassword` | string | Yes | Must satisfy the password policy (see below). Must differ from `currentPassword`. |
+| `confirmPassword` | string | Yes | Must match `newPassword` exactly. |
+
+#### Password Policy
+
+All new passwords (for both change-password and reset-password) must meet the following requirements:
+
+| Rule | Requirement |
+|---|---|
+| Minimum length | 8 characters |
+| Uppercase | At least one uppercase letter (A–Z) |
+| Lowercase | At least one lowercase letter (a–z) |
+| Digit | At least one numeric digit (0–9) |
+| Special character | At least one character from: `!@#$%^&*()_+-=[]{}|;':",./<>?` |
+
+#### Success Response — 200
+
+```json
+{ "success": true, "message": "Password changed. Please log in again." }
+```
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | Current password is incorrect. | `currentPassword` does not match the stored hash. |
+| `400` | New password must be different from the current password. | `newPassword` equals `currentPassword`. |
+| `400` | Passwords do not match. | `newPassword` and `confirmPassword` differ. |
+| `400` | *(policy message)* | `newPassword` fails the password policy (see above). |
+| `401` | — | Missing or invalid JWT. |
+
+#### Notes
+
+- All sessions and all refresh tokens are revoked immediately on success. The client must redirect to the login page.
+- `userId` is derived from the JWT — it is never taken from the request body.
+
+---
+
+### POST /api/v1/auth/forgot-password
+
+Initiates a password reset flow by sending a time-limited reset link to the user's email address. The response is identical whether or not the email exists in the system — this prevents user enumeration.
+
+**Auth required**: No
+
+#### Request
+
+```json
+{
+  "email": "alice@acme.com"
+}
+```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `email` | string | Yes | The email address to send the reset link to. Must be a valid email format. |
+
+#### Success Response — 200
+
+```json
+{ "success": true, "message": "If that email exists, a reset link has been sent." }
+```
+
+This response is returned **regardless of whether the email is registered** to prevent account enumeration.
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | *(validation message)* | Missing or malformed `email` field. |
+
+#### Notes
+
+- The reset link sent to the user's inbox has the form: `{BaseUrl}/reset-password?token={rawToken}`
+- The token expires in **15 minutes**.
+- The token is SHA-256 hashed before storage — the plaintext token is never persisted.
+- `BaseUrl` is configured in Azure App Config / `appsettings.json`.
+- SMTP settings must be configured under the `Smtp` section in `appsettings.json` (host, port, credentials, sender address).
+
+---
+
+### POST /api/v1/auth/reset-password
+
+Completes a password reset using the token from the reset link email. On success, all sessions and refresh tokens are revoked, requiring the user to log in with the new password.
+
+**Auth required**: No
+
+#### Request
+
+```json
+{
+  "token": "a3f1b2c4d5e6...",
+  "newPassword": "NewP@ss2!",
+  "confirmPassword": "NewP@ss2!"
+}
+```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `token` | string | Yes | The raw token from the reset link query string (`?token=`). |
+| `newPassword` | string | Yes | Must satisfy the password policy. Must differ from the current password. |
+| `confirmPassword` | string | Yes | Must match `newPassword` exactly. |
+
+#### Success Response — 200
+
+```json
+{ "success": true, "message": "Password reset successfully. Please log in." }
+```
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | Reset token is invalid or has expired. | Token not found, already used, or older than 15 minutes. |
+| `400` | New password must be different from the current password. | `newPassword` matches the user's existing password. |
+| `400` | Passwords do not match. | `newPassword` and `confirmPassword` differ. |
+| `400` | *(policy message)* | `newPassword` fails the password policy (see above). |
+
+#### Notes
+
+- The token is **single-use**. It is invalidated immediately on success.
+- Token expiry is **15 minutes** from when the forgot-password request was made.
+- All sessions and all refresh tokens are revoked on success.
+
+---
+
+### POST /api/v1/auth/heartbeat
+
+Resets the session idle timer. Call this endpoint periodically from long-lived clients (dashboards, SPAs) to keep the session alive while the user is active but not making other API calls.
+
+**Auth required**: Yes
+
+#### Request
+
+No body.
+
+#### Success Response — 200
+
+```json
+{ "success": true, "data": { "sessionActive": true } }
+```
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `401` | — | Missing or invalid token, or session has already expired. |
+
+#### Notes
+
+- Fire this request at an interval of `idleTimeoutMinutes × 0.5` minutes (returned at login). Example: if `idleTimeoutMinutes` is `30`, send a heartbeat every **15 minutes**.
+- A `401` response means the session has already expired. Stop the heartbeat interval, clear tokens from storage, and redirect the user to the login page. Do not attempt a token refresh — the session row is already gone.
+- `SessionValidationMiddleware` updates `last_active_at` automatically on every authenticated request, including this one.
 
 ---
 
@@ -708,6 +918,7 @@ Returns all companies.
     {
       "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
       "name": "Acme Corp",
+      "code": "fp",
       "countryCode": "US",
       "status": "active",
       "createdAt": "2026-01-01T00:00:00Z"
@@ -723,6 +934,22 @@ Returns all companies.
 Returns a single company by ID.
 
 **Auth required**: Yes — `PlatformOwner`
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+    "name": "Acme Corp",
+    "code": "fp",
+    "countryCode": "US",
+    "status": "active",
+    "createdAt": "2026-01-01T00:00:00Z"
+  }
+}
+```
 
 #### Error Responses
 
@@ -743,7 +970,8 @@ Creates a new company. Default status is `active`.
 ```json
 {
   "name": "Acme Corp",
-  "countryCode": "US"
+  "countryCode": "US",
+  "code": "fp"
 }
 ```
 
@@ -753,6 +981,7 @@ Creates a new company. Default status is `active`.
 |---|---|---|---|
 | `name` | string | Yes | Max 200 chars. Must be unique. |
 | `countryCode` | string | Yes | ISO country code (e.g. `US`, `GB`, `PH`). Max 10 chars. |
+| `code` | string | No | Short business identifier (e.g. `"fp"`). Used in JWT `business_codes` claim and file storage paths. The corresponding UUID appears in the parallel `business_ids` claim. |
 
 #### Success Response — 201
 
@@ -768,7 +997,7 @@ Returns the created `CompanyResponse`.
 
 ### PUT /api/v1/companies/{id}
 
-Updates a company's name and country code.
+Updates a company's name, country code, and optional code.
 
 **Auth required**: Yes — `PlatformOwner`
 
@@ -777,9 +1006,18 @@ Updates a company's name and country code.
 ```json
 {
   "name": "Acme International",
-  "countryCode": "GB"
+  "countryCode": "GB",
+  "code": "fp"
 }
 ```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `name` | string | Yes | Max 200 chars. Must be unique. |
+| `countryCode` | string | Yes | ISO country code. Max 10 chars. |
+| `code` | string | No | Short business identifier. |
 
 #### Success Response — 200
 
@@ -790,6 +1028,106 @@ Returns the updated `CompanyResponse`.
 | HTTP | Message | Cause |
 |---|---|---|
 | `404` | Company not found. | No company with that ID. |
+
+---
+
+### GET /api/v1/companies/{companyId}/members
+
+Returns all members of a company.
+
+**Auth required**: Yes — `PlatformOwner`
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "userId": "dc88786a-...",
+      "email": "chris.moriarty@flatplanet.com",
+      "fullName": "Chris Moriarty",
+      "role": "member",
+      "status": "active",
+      "joinedAt": "2026-04-10T00:07:38Z"
+    }
+  ]
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `userId` | UUID | Security Platform user ID. |
+| `email` | string | User's email address. |
+| `fullName` | string | User's display name. |
+| `role` | string | Membership role (e.g. `"member"`, `"admin"`). |
+| `status` | string | Membership status — `active` or `inactive`. |
+| `joinedAt` | string | ISO 8601 timestamp when the membership was created. |
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `404` | Company not found. | No company with that ID. |
+
+---
+
+### POST /api/v1/companies/{companyId}/members
+
+Adds a user to a company.
+
+**Auth required**: Yes — `PlatformOwner`
+
+#### Request
+
+```json
+{
+  "userId": "dc88786a-...",
+  "role": "member"
+}
+```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `userId` | UUID | Yes | ID of the user to add. |
+| `role` | string | Yes | Membership role to assign (e.g. `"member"`, `"admin"`). |
+
+#### Success Response — 200
+
+```json
+{ "success": true, "message": "Member added." }
+```
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `404` | Company not found. | No company with that ID. |
+| `404` | User not found. | No user with that ID. |
+| `409` | — | User is already a member of this company. |
+
+---
+
+### DELETE /api/v1/companies/{companyId}/members/{userId}
+
+Removes a user from a company.
+
+**Auth required**: Yes — `PlatformOwner`
+
+#### Success Response — 200
+
+```json
+{ "success": true, "message": "Member removed." }
+```
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `404` | Company not found. | No company with that ID. |
+| `404` | Member not found. | User is not a member of this company. |
 
 ---
 
@@ -1323,6 +1661,11 @@ Returns the created `UserAccessResponse`:
     "expiresAt": "2026-12-31T23:59:59Z"
   }
 }
+```
+
+#### Notes
+
+- If the user was previously granted access to this app and that grant was later revoked, calling this endpoint reactivates the existing record. It does **not** return `409`.
 
 ---
 

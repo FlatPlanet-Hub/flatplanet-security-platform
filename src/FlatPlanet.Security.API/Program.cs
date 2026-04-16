@@ -9,11 +9,13 @@ using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
 using FlatPlanet.Security.Infrastructure.BackgroundServices;
+using FlatPlanet.Security.Infrastructure.Email;
 using FlatPlanet.Security.Infrastructure.ExternalServices;
 using FlatPlanet.Security.Infrastructure.Persistence;
 using FlatPlanet.Security.Infrastructure.Repositories;
 using FlatPlanet.Security.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using Scalar.AspNetCore;
 
@@ -30,14 +32,32 @@ var jwtOptions = builder.Configuration.GetSection(JwtOptions.Section).Get<JwtOpt
 
 builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptions.Section));
 builder.Services.Configure<ServiceTokenOptions>(builder.Configuration.GetSection(ServiceTokenOptions.Section));
+builder.Services.Configure<AppOptions>(builder.Configuration.GetSection(AppOptions.Section));
+builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection(SmtpOptions.Section));
 builder.Services.Configure<SmsOptions>(builder.Configuration.GetSection(SmsOptions.Section));
 
 // Database
 builder.Services.AddSingleton<IDbConnectionFactory>(
     new NpgsqlConnectionFactory(dbOptions.BuildConnectionString()));
 
-// CORS
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+// CORS — load origins from registered apps + appsettings fallback
+var configOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+var dbOrigins = Array.Empty<string>();
+try
+{
+    await using var tempConn = new Npgsql.NpgsqlConnection(dbOptions.BuildConnectionString());
+    dbOrigins = (await Dapper.SqlMapper.QueryAsync<string>(
+        tempConn,
+        "SELECT DISTINCT base_url FROM apps WHERE status = 'active' AND base_url IS NOT NULL AND base_url <> ''"))
+        .ToArray();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[CORS] Could not load origins from DB, using config only: {ex.Message}");
+}
+
+var allowedOrigins = configOrigins.Union(dbOrigins).ToArray();
+
 builder.Services.AddCors(options =>
 {
     options.AddDefaultPolicy(policy =>
@@ -116,6 +136,8 @@ builder.Services.AddScoped<ICompanyRepository, CompanyRepository>();
 builder.Services.AddScoped<IResourceTypeRepository, ResourceTypeRepository>();
 builder.Services.AddScoped<IResourceRepository, ResourceRepository>();
 builder.Services.AddScoped<IPermissionRepository, PermissionRepository>();
+builder.Services.AddScoped<IBusinessMembershipRepository, BusinessMembershipRepository>();
+builder.Services.AddScoped<IPasswordResetTokenRepository, PasswordResetTokenRepository>();
 builder.Services.AddScoped<IAdminAuditLogRepository, AdminAuditLogRepository>();
 builder.Services.AddScoped<IMfaChallengeRepository, MfaChallengeRepository>();
 builder.Services.AddScoped<IIdentityVerificationRepository, IdentityVerificationRepository>();
@@ -138,6 +160,8 @@ builder.Services.AddScoped<IOffboardingService, OffboardingService>();
 builder.Services.AddScoped<IComplianceService, ComplianceService>();
 builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
+builder.Services.AddScoped<IBusinessMembershipService, BusinessMembershipService>();
+builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("twilio", (sp, client) =>
 {

@@ -6,6 +6,8 @@ using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
 using FlatPlanet.Security.Domain.Entities;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace FlatPlanet.Security.Tests;
@@ -26,12 +28,19 @@ public class AuthServiceTests
     private readonly Mock<IDbTransaction> _tx = new();
     private readonly Mock<ICompanyRepository> _companies = new();
     private readonly Mock<IUserContextService> _userContext = new();
+    private readonly Mock<IPasswordResetTokenRepository> _resetTokens = new();
+    private readonly Mock<IEmailService> _emailService = new();
+    private readonly Mock<IAppRepository> _apps = new();
+    private readonly Mock<ILogger<AuthService>> _logger = new();
+    private readonly Mock<IMfaService> _mfa = new();
 
     private AuthService CreateService() => new(
         _passwordHasher.Object, _jwt.Object, _users.Object,
         _sessions.Object, _refreshTokens.Object,
         _loginAttempts.Object, _auditLog.Object, _securityConfig.Object,
-        _roles.Object, _db.Object, _companies.Object, _userContext.Object);
+        _roles.Object, _db.Object, _companies.Object, _userContext.Object,
+        _resetTokens.Object, _emailService.Object, _apps.Object, _logger.Object,
+        _mfa.Object);
 
     private void SetupDefaultConfig()
     {
@@ -82,7 +91,7 @@ public class AuthServiceTests
         _sessions.Setup(s => s.CreateAsync(It.IsAny<Session>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
             .ReturnsAsync((Session s, IDbConnection _, IDbTransaction _) => { s.Id = sessionId; return s; });
 
-        _jwt.Setup(j => j.IssueAccessToken(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).Returns("access.token.here");
+        _jwt.Setup(j => j.IssueAccessTokenAsync(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).ReturnsAsync("access.token.here");
         _jwt.Setup(j => j.GenerateRefreshToken()).Returns(("plain-token", "hashed-token"));
         _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
             .ReturnsAsync((RefreshToken t, IDbConnection _, IDbTransaction _) => t);
@@ -100,6 +109,7 @@ public class AuthServiceTests
         Assert.Equal("access.token.here", result.AccessToken);
         Assert.Equal("plain-token", result.RefreshToken);
         Assert.Equal(userId, result.User.UserId);
+        Assert.Equal(30, result.IdleTimeoutMinutes);
     }
 
     [Fact]
@@ -278,12 +288,12 @@ public class AuthServiceTests
             });
         _users.Setup(u => u.GetByIdAsync(userId))
             .ReturnsAsync(new User { Id = userId, Email = "user@test.com", FullName = "Test", Status = "active" });
-        _refreshTokens.Setup(r => r.RevokeAsync(tokenId, "rotated")).Returns(Task.CompletedTask);
         _jwt.Setup(j => j.GenerateRefreshToken()).Returns(("new-plain", "new-hash"));
+        _refreshTokens.Setup(r => r.RotateAsync(tokenId, "new-hash", "new-plain")).Returns(Task.CompletedTask);
         _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>()))
             .ReturnsAsync((RefreshToken t) => t);
         _roles.Setup(r => r.GetPlatformRoleNamesForUserAsync(userId)).ReturnsAsync(new List<string>());
-        _jwt.Setup(j => j.IssueAccessToken(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).Returns("new-access-token");
+        _jwt.Setup(j => j.IssueAccessTokenAsync(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).ReturnsAsync("new-access-token");
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
         var service = CreateService();
@@ -294,7 +304,7 @@ public class AuthServiceTests
         // Assert
         Assert.Equal("new-access-token", result.AccessToken);
         Assert.Equal("new-plain", result.RefreshToken);
-        _refreshTokens.Verify(r => r.RevokeAsync(tokenId, "rotated"), Times.Once);
+        _refreshTokens.Verify(r => r.RotateAsync(tokenId, "new-hash", "new-plain"), Times.Once);
     }
 
     [Fact]

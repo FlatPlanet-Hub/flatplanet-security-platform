@@ -86,4 +86,36 @@ public class RefreshTokenRepository : IRefreshTokenRepository
             """,
             new { Reason = reason, CompanyId = companyId });
     }
+
+    public async Task RotateAsync(Guid tokenId, string newTokenHash, string newTokenPlain)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            """
+            UPDATE refresh_tokens
+            SET revoked                 = true,
+                revoked_at              = now(),
+                revoked_reason          = 'rotated',
+                replaced_by_token_hash  = @NewTokenHash,
+                replaced_by_token_plain = @NewTokenPlain,
+                rotated_at              = now()
+            WHERE id = @Id
+            """,
+            new { Id = tokenId, NewTokenHash = newTokenHash, NewTokenPlain = newTokenPlain });
+    }
+
+    public async Task<RefreshToken?> GetRecentlyRotatedAsync(string tokenHash, int graceWindowSeconds)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        return await conn.QuerySingleOrDefaultAsync<RefreshToken>(
+            """
+            SELECT * FROM refresh_tokens
+            WHERE replaced_by_token_hash = @TokenHash
+              AND revoked = true
+              AND revoked_reason = 'rotated'
+              AND rotated_at >= now() - (@GraceWindowSeconds || ' seconds')::interval
+            LIMIT 1
+            """,
+            new { TokenHash = tokenHash, GraceWindowSeconds = graceWindowSeconds });
+    }
 }
