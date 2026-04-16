@@ -23,20 +23,25 @@ public class AuditLogCleanupService : BackgroundService
             try
             {
                 using var scope = _scopeFactory.CreateScope();
-                var config = scope.ServiceProvider.GetRequiredService<ISecurityConfigRepository>();
-                var audit  = scope.ServiceProvider.GetRequiredService<IAdminAuditLogRepository>();
-                var mfa    = scope.ServiceProvider.GetRequiredService<IMfaChallengeRepository>();
+                var config        = scope.ServiceProvider.GetRequiredService<ISecurityConfigRepository>();
+                var audit         = scope.ServiceProvider.GetRequiredService<IAdminAuditLogRepository>();
+                var mfa           = scope.ServiceProvider.GetRequiredService<IMfaChallengeRepository>();
+                var loginAttempts = scope.ServiceProvider.GetRequiredService<ILoginAttemptRepository>();
 
                 var raw           = await config.GetValueAsync("audit_log_retention_days");
                 var retentionDays = int.TryParse(raw, out var days) ? days : 1095;
 
                 await audit.DeleteExpiredAsync(retentionDays);
                 await mfa.DeleteExpiredAsync();
-                _logger.LogInformation("Cleanup complete. Audit retention: {Days} days.", retentionDays);
+                await loginAttempts.DeleteOlderThanAsync(retentionDays);
+
+                _logger.LogInformation(
+                    "Cleanup complete. Retention: {Days} days. Cleaned: admin_audit_log, mfa_challenges, login_attempts.",
+                    retentionDays);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Admin audit log cleanup failed.");
+                _logger.LogError(ex, "Audit log cleanup failed.");
             }
 
             await Task.Delay(TimeSpan.FromHours(24), ct);

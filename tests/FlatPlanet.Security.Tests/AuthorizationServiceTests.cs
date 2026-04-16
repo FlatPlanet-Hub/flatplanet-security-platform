@@ -2,6 +2,7 @@ using FlatPlanet.Security.Application.DTOs.Authorization;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Services;
 using FlatPlanet.Security.Domain.Entities;
+using Microsoft.Extensions.Caching.Memory;
 using Moq;
 
 namespace FlatPlanet.Security.Tests;
@@ -13,10 +14,13 @@ public class AuthorizationServiceTests
     private readonly Mock<IAppRepository> _apps = new();
     private readonly Mock<IRoleRepository> _roles = new();
     private readonly Mock<IAuditLogRepository> _auditLog = new();
+    private readonly Mock<ISecurityConfigRepository> _securityConfig = new();
+    private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
 
     private AuthorizationService CreateService() => new(
         _userAppRoles.Object, _rolePermissions.Object,
-        _apps.Object, _roles.Object, _auditLog.Object);
+        _apps.Object, _roles.Object, _auditLog.Object,
+        _securityConfig.Object, _cache);
 
     private readonly Guid _appId = Guid.NewGuid();
     private readonly Guid _userId = Guid.NewGuid();
@@ -38,6 +42,9 @@ public class AuthorizationServiceTests
 
         _rolePermissions.Setup(rp => rp.GetPermissionsByRoleIdsAsync(It.IsAny<IEnumerable<Guid>>()))
             .ReturnsAsync(new[] { new Permission { Id = Guid.NewGuid(), Name = permissionName } });
+
+        _securityConfig.Setup(c => c.GetValueAsync("audit_log_authorize_allowed"))
+            .ReturnsAsync("true");
 
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 

@@ -119,6 +119,7 @@ builder.Services.AddControllers()
         };
     });
 builder.Services.AddMemoryCache();
+builder.Services.AddHttpContextAccessor();
 
 // Rate limiting
 builder.Services.AddRateLimiter(options =>
@@ -164,6 +165,7 @@ builder.Services.AddScoped<ISessionRepository, SessionRepository>();
 builder.Services.AddScoped<IRefreshTokenRepository, RefreshTokenRepository>();
 builder.Services.AddScoped<ILoginAttemptRepository, LoginAttemptRepository>();
 builder.Services.AddScoped<IAuditLogRepository, AuditLogRepository>();
+builder.Services.AddScoped<IAdminAuditLogRepository, AdminAuditLogRepository>();
 builder.Services.AddScoped<ISecurityConfigRepository, SecurityConfigRepository>();
 builder.Services.AddScoped<IUserAppRoleRepository, UserAppRoleRepository>();
 builder.Services.AddScoped<IRolePermissionRepository, RolePermissionRepository>();
@@ -175,6 +177,7 @@ builder.Services.AddScoped<IResourceRepository, ResourceRepository>();
 builder.Services.AddScoped<IPermissionRepository, PermissionRepository>();
 builder.Services.AddScoped<IBusinessMembershipRepository, BusinessMembershipRepository>();
 builder.Services.AddScoped<IPasswordResetTokenRepository, PasswordResetTokenRepository>();
+builder.Services.AddScoped<IMfaChallengeRepository, MfaChallengeRepository>();
 
 // Services
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();

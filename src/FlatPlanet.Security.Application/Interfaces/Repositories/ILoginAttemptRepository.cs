@@ -8,4 +8,5 @@ public interface ILoginAttemptRepository
     Task<int> CountRecentByEmailAsync(string email, DateTime since);
     Task<int> CountRecentFailuresByEmailAsync(string email, DateTime since);
     Task<int> CountRecentFailuresByIpAsync(string ipAddress, DateTime since);
+    Task DeleteOlderThanAsync(int retentionDays);
 }
