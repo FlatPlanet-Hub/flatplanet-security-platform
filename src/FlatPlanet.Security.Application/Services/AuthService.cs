@@ -70,12 +70,6 @@ public class AuthService : IAuthService
         _logger = logger;
     }
 
-    private void EvictSessionCache(Guid? sessionId)
-    {
-        if (sessionId.HasValue)
-            _cache.Remove($"fp:sec:session:{sessionId.Value}");
-    }
-
     public async Task<LoginResponse> LoginAsync(LoginRequest request, string? ipAddress, string? userAgent)
     {
         var now = DateTime.UtcNow;
