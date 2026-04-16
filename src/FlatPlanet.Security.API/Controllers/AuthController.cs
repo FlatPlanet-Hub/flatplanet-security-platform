@@ -2,6 +2,7 @@ using FlatPlanet.Security.Application.DTOs.Auth;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace FlatPlanet.Security.API.Controllers;
 
@@ -62,6 +63,7 @@ public class AuthController : ApiController
     }
 
     [Authorize]
+    [EnableRateLimiting("change-password")]
     [HttpPost("change-password")]
     public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
     {
@@ -71,6 +73,7 @@ public class AuthController : ApiController
         return OkMessage("Password changed. Please log in again.");
     }
 
+    [EnableRateLimiting("forgot-password")]
     [HttpPost("forgot-password")]
     public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
     {
