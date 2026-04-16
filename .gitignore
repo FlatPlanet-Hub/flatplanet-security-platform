@@ -28,3 +28,9 @@ CLAUDE-local.md
 .claude/settings.local.json
 .claude/worktrees/
 node_modules/
+
+# Temp/noise files
+package.json
+package-lock.json
+*.json.tmp
+login.json
