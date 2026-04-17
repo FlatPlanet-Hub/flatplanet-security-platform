@@ -35,6 +35,27 @@ public class MfaBackupCodeRepository : IMfaBackupCodeRepository
             new { Id = id });
     }
 
+    public async Task ReplaceAllAsync(Guid userId, IEnumerable<MfaBackupCode> codes)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        using var tx = conn.BeginTransaction();
+        try
+        {
+            await conn.ExecuteAsync(
+                "DELETE FROM mfa_backup_codes WHERE user_id = @UserId",
+                new { UserId = userId }, tx);
+            await conn.ExecuteAsync(
+                "INSERT INTO mfa_backup_codes (user_id, code_hash) VALUES (@UserId, @CodeHash)",
+                codes, tx);
+            tx.Commit();
+        }
+        catch
+        {
+            tx.Rollback();
+            throw;
+        }
+    }
+
     public async Task DeleteAllByUserAsync(Guid userId)
     {
         using var conn = await _db.CreateConnectionAsync();

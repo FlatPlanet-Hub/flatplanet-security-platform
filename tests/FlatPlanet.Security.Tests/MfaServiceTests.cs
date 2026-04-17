@@ -405,12 +405,14 @@ public class MfaServiceTests
     {
         var userId = Guid.NewGuid();
         _users.Setup(u => u.ResetMfaColumnsAsync(userId)).ReturnsAsync(true);
+        _backupCodes.Setup(b => b.DeleteAllByUserAsync(userId)).Returns(Task.CompletedTask);
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
         var svc = CreateService();
         await svc.DisableMfaAsync(userId);
 
         _users.Verify(u => u.ResetMfaColumnsAsync(userId), Times.Once);
+        _backupCodes.Verify(b => b.DeleteAllByUserAsync(userId), Times.Once);
     }
 
     [Fact]
@@ -428,12 +430,14 @@ public class MfaServiceTests
     {
         var userId = Guid.NewGuid();
         _users.Setup(u => u.ResetMfaColumnsAsync(userId)).ReturnsAsync(true);
+        _backupCodes.Setup(b => b.DeleteAllByUserAsync(userId)).Returns(Task.CompletedTask);
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
         var svc = CreateService();
         await svc.ResetMfaAsync(userId);
 
         _users.Verify(u => u.ResetMfaColumnsAsync(userId), Times.Once);
+        _backupCodes.Verify(b => b.DeleteAllByUserAsync(userId), Times.Once);
     }
 
     [Fact]
@@ -555,8 +559,7 @@ public class MfaServiceTests
         var userId = Guid.NewGuid();
         _users.Setup(u => u.GetByIdAsync(userId))
             .ReturnsAsync(new User { Id = userId, MfaTotpEnrolled = true });
-        _backupCodes.Setup(b => b.DeleteAllByUserAsync(userId)).Returns(Task.CompletedTask);
-        _backupCodes.Setup(b => b.CreateManyAsync(It.IsAny<IEnumerable<MfaBackupCode>>())).Returns(Task.CompletedTask);
+        _backupCodes.Setup(b => b.ReplaceAllAsync(userId, It.IsAny<IEnumerable<MfaBackupCode>>())).Returns(Task.CompletedTask);
         _jwt.Setup(j => j.HashToken(It.IsAny<string>())).Returns("hashed");
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
@@ -566,7 +569,7 @@ public class MfaServiceTests
         Assert.Equal(8, result.Count);
         Assert.Equal(8, result.Codes.Count());
         Assert.All(result.Codes, code => Assert.Equal(10, code.Length));
-        _backupCodes.Verify(b => b.DeleteAllByUserAsync(userId), Times.Once);
+        _backupCodes.Verify(b => b.ReplaceAllAsync(userId, It.IsAny<IEnumerable<MfaBackupCode>>()), Times.Once);
     }
 
     [Fact]

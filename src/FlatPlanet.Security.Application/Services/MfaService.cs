@@ -352,12 +352,10 @@ public class MfaService : IMfaService
         if (!user.MfaTotpEnrolled)
             throw new InvalidOperationException("Backup codes require TOTP to be enrolled first.");
 
-        // Delete all existing codes (unused and used) before generating fresh set.
-        await _backupCodes.DeleteAllByUserAsync(userId);
-
         var plainCodes = Enumerable.Range(0, 8).Select(_ => GenerateBackupCode()).ToList();
 
-        await _backupCodes.CreateManyAsync(plainCodes.Select(code => new MfaBackupCode
+        // P2-2: Atomic replace — delete old codes and insert new ones in a single transaction.
+        await _backupCodes.ReplaceAllAsync(userId, plainCodes.Select(code => new MfaBackupCode
         {
             UserId   = userId,
             CodeHash = _jwt.HashToken(code)
@@ -384,7 +382,7 @@ public class MfaService : IMfaService
         if (user.Status != "active")
             throw new ForbiddenException($"User account is {user.Status}.");
 
-        var codeHash = _jwt.HashToken(backupCode);
+        var codeHash = _jwt.HashToken(backupCode.ToUpperInvariant());
         var stored = await _backupCodes.GetUnusedByUserAndHashAsync(userId, codeHash);
 
         if (stored is null)
@@ -457,7 +455,9 @@ public class MfaService : IMfaService
         var found = await _users.ResetMfaColumnsAsync(userId);
         if (!found)
             throw new KeyNotFoundException("User not found.");
-        await _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaDisabled });
+        await Task.WhenAll(
+            _backupCodes.DeleteAllByUserAsync(userId),
+            _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaDisabled }));
     }
 
     public async Task ResetMfaAsync(Guid userId)
@@ -465,7 +465,9 @@ public class MfaService : IMfaService
         var found = await _users.ResetMfaColumnsAsync(userId);
         if (!found)
             throw new KeyNotFoundException("User not found.");
-        await _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaReset });
+        await Task.WhenAll(
+            _backupCodes.DeleteAllByUserAsync(userId),
+            _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaReset }));
     }
 
     // ── Shared session factory ───────────────────────────────────────────────
