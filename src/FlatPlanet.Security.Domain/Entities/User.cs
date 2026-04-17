@@ -15,5 +15,6 @@ public class User
     public string? MfaMethod { get; set; }
     public string? MfaTotpSecret { get; set; }
     public bool MfaTotpEnrolled { get; set; }
+    public long? MfaTotpLastUsedStep { get; set; }
     public DateTime? PasswordChangedAt { get; set; }
 }

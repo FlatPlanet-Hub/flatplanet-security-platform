@@ -27,6 +27,7 @@ public class MfaServiceTests
     private readonly Mock<IDbTransaction> _tx = new();
     private readonly Mock<IIdentityVerificationService> _identityVerification = new();
     private readonly Mock<ITotpSecretEncryptor> _encryptor = new();
+    private readonly Mock<ITotpVerifier> _totpVerifier = new();
     private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
     private readonly Mock<ILogger<MfaService>> _logger = new();
 
@@ -35,7 +36,7 @@ public class MfaServiceTests
         _securityConfig.Object, _jwt.Object, _auditLog.Object,
         _sessions.Object, _refreshTokens.Object, _roles.Object,
         _db.Object, _identityVerification.Object, _encryptor.Object,
-        _cache, _logger.Object);
+        _totpVerifier.Object, _cache, _logger.Object);
 
     private void SetupTransaction()
     {
@@ -275,7 +276,7 @@ public class MfaServiceTests
     public async Task DisableMfa_ShouldCallResetColumns()
     {
         var userId = Guid.NewGuid();
-        _users.Setup(u => u.ResetMfaColumnsAsync(userId)).Returns(Task.CompletedTask);
+        _users.Setup(u => u.ResetMfaColumnsAsync(userId)).ReturnsAsync(true);
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
         var svc = CreateService();
@@ -285,15 +286,146 @@ public class MfaServiceTests
     }
 
     [Fact]
+    public async Task DisableMfa_ShouldThrow_WhenUserNotFound()
+    {
+        var userId = Guid.NewGuid();
+        _users.Setup(u => u.ResetMfaColumnsAsync(userId)).ReturnsAsync(false);
+
+        var svc = CreateService();
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.DisableMfaAsync(userId));
+    }
+
+    [Fact]
     public async Task ResetMfa_ShouldCallResetColumns()
     {
         var userId = Guid.NewGuid();
-        _users.Setup(u => u.ResetMfaColumnsAsync(userId)).Returns(Task.CompletedTask);
+        _users.Setup(u => u.ResetMfaColumnsAsync(userId)).ReturnsAsync(true);
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
 
         var svc = CreateService();
         await svc.ResetMfaAsync(userId);
 
         _users.Verify(u => u.ResetMfaColumnsAsync(userId), Times.Once);
+    }
+
+    [Fact]
+    public async Task ResetMfa_ShouldThrow_WhenUserNotFound()
+    {
+        var userId = Guid.NewGuid();
+        _users.Setup(u => u.ResetMfaColumnsAsync(userId)).ReturnsAsync(false);
+
+        var svc = CreateService();
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.ResetMfaAsync(userId));
+    }
+
+    // ── VerifyLoginTotpAsync ─────────────────────────────────────────────────
+
+    [Fact]
+    public async Task VerifyLoginTotp_ShouldReturnTokens_WhenTotpValid()
+    {
+        SetupTransaction();
+        SetupDefaultSessionConfig();
+
+        var userId = Guid.NewGuid();
+        var sessionId = Guid.NewGuid();
+        var secretBytes = new byte[20];
+        long matchedStep = 100L;
+
+        _users.Setup(u => u.GetByIdAsync(userId))
+            .ReturnsAsync(new User { Id = userId, Email = "user@test.com", FullName = "Test", CompanyId = Guid.NewGuid(),
+                MfaTotpEnrolled = true, MfaTotpSecret = "encrypted", MfaTotpLastUsedStep = null });
+        _encryptor.Setup(e => e.Decrypt("encrypted")).Returns(secretBytes);
+        _totpVerifier.Setup(t => t.Verify(secretBytes, "123456", out matchedStep)).Returns(true);
+        _users.Setup(u => u.UpdateMfaTotpLastUsedStepAsync(userId, matchedStep)).Returns(Task.CompletedTask);
+
+        _sessions.Setup(s => s.EvictOldestIfOverLimitAsync(userId, It.IsAny<int>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>())).Returns(Task.CompletedTask);
+        _sessions.Setup(s => s.CreateAsync(It.IsAny<Session>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
+            .ReturnsAsync((Session s, IDbConnection _, IDbTransaction _) => { s.Id = sessionId; return s; });
+        _jwt.Setup(j => j.GenerateRefreshToken()).Returns(("plain-rt", "hashed-rt"));
+        _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
+            .ReturnsAsync((RefreshToken t, IDbConnection _, IDbTransaction _) => t);
+        _roles.Setup(r => r.GetPlatformRoleNamesForUserAsync(userId)).ReturnsAsync(new List<string>());
+        _jwt.Setup(j => j.IssueAccessTokenAsync(It.IsAny<User>(), sessionId, It.IsAny<IEnumerable<string>>())).ReturnsAsync("access-token");
+        _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
+
+        var svc = CreateService();
+        var result = await svc.VerifyLoginTotpAsync(userId, "123456", "1.2.3.4", "agent");
+
+        Assert.Equal("access-token", result.AccessToken);
+        Assert.Equal("plain-rt", result.RefreshToken);
+        _users.Verify(u => u.UpdateMfaTotpLastUsedStepAsync(userId, matchedStep), Times.Once);
+    }
+
+    [Fact]
+    public async Task VerifyLoginTotp_ShouldThrow_WhenNotEnrolled()
+    {
+        var userId = Guid.NewGuid();
+        _users.Setup(u => u.GetByIdAsync(userId))
+            .ReturnsAsync(new User { Id = userId, MfaTotpEnrolled = false });
+
+        var svc = CreateService();
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            svc.VerifyLoginTotpAsync(userId, "123456", null, null));
+    }
+
+    [Fact]
+    public async Task VerifyLoginTotp_ShouldThrow_WhenCodeInvalid()
+    {
+        var userId = Guid.NewGuid();
+        var secretBytes = new byte[20];
+        long matchedStep = 0L;
+
+        _users.Setup(u => u.GetByIdAsync(userId))
+            .ReturnsAsync(new User { Id = userId, MfaTotpEnrolled = true, MfaTotpSecret = "encrypted" });
+        _encryptor.Setup(e => e.Decrypt("encrypted")).Returns(secretBytes);
+        _totpVerifier.Setup(t => t.Verify(secretBytes, "000000", out matchedStep)).Returns(false);
+        _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
+
+        var svc = CreateService();
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            svc.VerifyLoginTotpAsync(userId, "000000", null, null));
+    }
+
+    [Fact]
+    public async Task VerifyLoginTotp_ShouldThrow_WhenStepReplayed()
+    {
+        var userId = Guid.NewGuid();
+        var secretBytes = new byte[20];
+        long matchedStep = 99L;
+
+        _users.Setup(u => u.GetByIdAsync(userId))
+            .ReturnsAsync(new User { Id = userId, MfaTotpEnrolled = true, MfaTotpSecret = "encrypted",
+                MfaTotpLastUsedStep = 99L }); // last used step == matched step → replay
+        _encryptor.Setup(e => e.Decrypt("encrypted")).Returns(secretBytes);
+        _totpVerifier.Setup(t => t.Verify(secretBytes, "123456", out matchedStep)).Returns(true);
+        _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
+
+        var svc = CreateService();
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            svc.VerifyLoginTotpAsync(userId, "123456", null, null));
+    }
+
+    // ── P1-3: User status check ──────────────────────────────────────────────
+
+    [Fact]
+    public async Task VerifyLoginEmailOtp_ShouldThrow_WhenUserSuspended()
+    {
+        var userId = Guid.NewGuid();
+        var challengeId = Guid.NewGuid();
+
+        _challenges.Setup(c => c.GetByIdAsync(challengeId)).ReturnsAsync(new MfaChallenge
+        {
+            Id = challengeId, UserId = userId, ChallengeType = "email_otp",
+            OtpHash = "correct-hash", ExpiresAt = DateTime.UtcNow.AddMinutes(5), Attempts = 0
+        });
+        _securityConfig.Setup(s => s.GetValueAsync("mfa_max_otp_attempts")).ReturnsAsync("5");
+        _jwt.Setup(j => j.HashToken("123456")).Returns("correct-hash");
+        _challenges.Setup(c => c.MarkVerifiedAsync(challengeId)).Returns(Task.CompletedTask);
+        _users.Setup(u => u.GetByIdAsync(userId))
+            .ReturnsAsync(new User { Id = userId, Email = "user@test.com", Status = "suspended" });
+
+        var svc = CreateService();
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            svc.VerifyLoginEmailOtpAsync(challengeId, "123456", null, null));
     }
 }

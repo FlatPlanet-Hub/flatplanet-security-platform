@@ -28,6 +28,7 @@ public class MfaService : IMfaService
     private readonly IDbConnectionFactory _db;
     private readonly IIdentityVerificationService _identityVerification;
     private readonly ITotpSecretEncryptor _encryptor;
+    private readonly ITotpVerifier _totpVerifier;
     private readonly IMemoryCache _cache;
     private readonly ILogger<MfaService> _logger;
 
@@ -44,6 +45,7 @@ public class MfaService : IMfaService
         IDbConnectionFactory db,
         IIdentityVerificationService identityVerification,
         ITotpSecretEncryptor encryptor,
+        ITotpVerifier totpVerifier,
         IMemoryCache cache,
         ILogger<MfaService> logger)
     {
@@ -59,6 +61,7 @@ public class MfaService : IMfaService
         _db = db;
         _identityVerification = identityVerification;
         _encryptor = encryptor;
+        _totpVerifier = totpVerifier;
         _cache = cache;
         _logger = logger;
     }
@@ -93,32 +96,41 @@ public class MfaService : IMfaService
             throw new InvalidOperationException("TOTP enrolment has not been started. Call begin-enrol first.");
 
         var secret = _encryptor.Decrypt(user.MfaTotpSecret);
-        var totp = new Totp(secret);
-        if (!totp.VerifyTotp(totpCode, out _, new VerificationWindow(1, 1)))
+
+        // P1-1: Verify code and capture matched step for replay detection
+        if (!_totpVerifier.Verify(secret, totpCode, out var matchedStep))
         {
-            _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaFailed }));
+            await _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaFailed });
             throw new UnauthorizedAccessException("Invalid TOTP code.");
         }
 
+        // P1-1: Reject if this time step was already used (replay within 90-second window)
+        if (user.MfaTotpLastUsedStep.HasValue && matchedStep <= user.MfaTotpLastUsedStep.Value)
+        {
+            await _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaFailed });
+            throw new UnauthorizedAccessException("TOTP code has already been used. Wait for the next code.");
+        }
+
+        await _users.UpdateMfaTotpLastUsedStepAsync(userId, matchedStep);
         await _users.SetMfaTotpEnrolledAsync(userId, true);
         await _identityVerification.SyncStatusAsync(userId, true);
 
         var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
+        int Cfg(string key, int def) =>
+            config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
-        _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog
+        var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
+        var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
+
+        // P1-4: Blocking audit log — MFA enrolment events must be guaranteed
+        await _auditLog.LogAsync(new AuthAuditLog
         {
             UserId    = userId,
             EventType = AuditEventType.MfaEnrolmentComplete,
             IpAddress = ipAddress,
             UserAgent = userAgent,
             Details   = JsonSerializer.Serialize(new { method = "totp", session_id = session.Id })
-        }));
-
-        int Cfg(string key, int def) =>
-            config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
-
-        var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
-        var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
+        });
 
         return new LoginResponse
         {
@@ -143,33 +155,47 @@ public class MfaService : IMfaService
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
 
+        // P1-2: Reject if TOTP enrolment was not completed
+        if (!user.MfaTotpEnrolled)
+            throw new InvalidOperationException("TOTP is not enrolled for this account.");
+
         if (string.IsNullOrEmpty(user.MfaTotpSecret))
             throw new InvalidOperationException("TOTP is not configured for this account.");
 
         var secret = _encryptor.Decrypt(user.MfaTotpSecret);
-        var totp = new Totp(secret);
-        if (!totp.VerifyTotp(totpCode, out _, new VerificationWindow(1, 1)))
+
+        // P1-1: Verify code and capture matched step for replay detection
+        if (!_totpVerifier.Verify(secret, totpCode, out var matchedStep))
         {
-            _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaFailed, IpAddress = ipAddress }));
+            await _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaFailed, IpAddress = ipAddress });
             throw new UnauthorizedAccessException("Invalid TOTP code.");
         }
 
-        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
+        // P1-1: Reject replay within the 90-second verification window
+        if (user.MfaTotpLastUsedStep.HasValue && matchedStep <= user.MfaTotpLastUsedStep.Value)
+        {
+            await _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaFailed, IpAddress = ipAddress });
+            throw new UnauthorizedAccessException("TOTP code has already been used. Wait for the next code.");
+        }
 
+        await _users.UpdateMfaTotpLastUsedStepAsync(userId, matchedStep);
+
+        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
         int Cfg(string key, int def) =>
             config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
         var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
 
-        _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog
+        // P1-4: Blocking audit log
+        await _auditLog.LogAsync(new AuthAuditLog
         {
             UserId    = userId,
             EventType = AuditEventType.MfaLoginVerified,
             IpAddress = ipAddress,
             UserAgent = userAgent,
             Details   = JsonSerializer.Serialize(new { method = "totp", session_id = session.Id })
-        }));
+        });
 
         return new LoginResponse
         {
@@ -218,13 +244,14 @@ public class MfaService : IMfaService
             throw new ServiceUnavailableException("Email service is temporarily unavailable. Please try again.");
         }
 
-        _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog
+        // P1-4: Blocking audit log
+        await _auditLog.LogAsync(new AuthAuditLog
         {
             UserId    = userId,
             EventType = AuditEventType.MfaOtpIssued,
             IpAddress = ipAddress,
             Details   = JsonSerializer.Serialize(new { type = "email_otp" })
-        }));
+        });
 
         return challenge;
     }
@@ -250,7 +277,8 @@ public class MfaService : IMfaService
         if (_jwt.HashToken(otpCode) != challenge.OtpHash)
         {
             await _challenges.IncrementAttemptsAsync(challenge.Id);
-            _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog { UserId = challenge.UserId, EventType = AuditEventType.MfaFailed, IpAddress = ipAddress }));
+            // P1-4: Blocking audit log
+            await _auditLog.LogAsync(new AuthAuditLog { UserId = challenge.UserId, EventType = AuditEventType.MfaFailed, IpAddress = ipAddress });
             throw new UnauthorizedAccessException("Invalid OTP.");
         }
 
@@ -259,8 +287,11 @@ public class MfaService : IMfaService
         var user = await _users.GetByIdAsync(challenge.UserId)
             ?? throw new KeyNotFoundException("User not found.");
 
-        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
+        // P1-3: Reject if user was suspended after the challenge was issued
+        if (user.Status != "active")
+            throw new ForbiddenException($"User account is {user.Status}.");
 
+        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
         int Cfg(string key, int def) =>
             config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
@@ -268,14 +299,15 @@ public class MfaService : IMfaService
         var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
 
         // ISO 27001: email OTP does NOT set mfa_verified — only TOTP enrolment does
-        _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog
+        // P1-4: Blocking audit log
+        await _auditLog.LogAsync(new AuthAuditLog
         {
             UserId    = user.Id,
             EventType = AuditEventType.MfaLoginVerified,
             IpAddress = ipAddress,
             UserAgent = userAgent,
             Details   = JsonSerializer.Serialize(new { method = "email_otp", session_id = session.Id })
-        }));
+        });
 
         return new LoginResponse
         {
@@ -297,14 +329,20 @@ public class MfaService : IMfaService
 
     public async Task DisableMfaAsync(Guid userId)
     {
-        await _users.ResetMfaColumnsAsync(userId);
-        _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaDisabled }));
+        // P1-5: Verify user exists — ResetMfaColumnsAsync returns false if not found
+        var found = await _users.ResetMfaColumnsAsync(userId);
+        if (!found)
+            throw new KeyNotFoundException("User not found.");
+        await _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaDisabled });
     }
 
     public async Task ResetMfaAsync(Guid userId)
     {
-        await _users.ResetMfaColumnsAsync(userId);
-        _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaReset }));
+        // P1-5: Verify user exists — ResetMfaColumnsAsync returns false if not found
+        var found = await _users.ResetMfaColumnsAsync(userId);
+        if (!found)
+            throw new KeyNotFoundException("User not found.");
+        await _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaReset });
     }
 
     // ── Shared session factory ───────────────────────────────────────────────
@@ -312,7 +350,8 @@ public class MfaService : IMfaService
     private async Task<(Session session, string refreshTokenPlain, Dictionary<string, string> config)> CreateSessionInTransactionAsync(
         Guid userId, string? ipAddress, string? userAgent)
     {
-        var config = (await _securityConfig.GetAllAsync()).ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
+        // P2-1: Use 5-min cache consistent with AuthService.LoadConfigAsync pattern
+        var config = await LoadConfigAsync();
         int Cfg(string key, int def) =>
             config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
@@ -365,6 +404,23 @@ public class MfaService : IMfaService
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
+
+    private async Task<Dictionary<string, string>> LoadConfigAsync()
+    {
+        const string cacheKey = "fp:sec:cfg:all";
+        if (_cache.TryGetValue(cacheKey, out Dictionary<string, string>? cached) && cached is not null)
+            return cached;
+
+        var configs = await _securityConfig.GetAllAsync();
+        var dict = configs.ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
+
+        _cache.Set(cacheKey, dict, new Microsoft.Extensions.Caching.Memory.MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
+        });
+
+        return dict;
+    }
 
     private async Task<(int expiryMinutes, int otpLength)> GetEmailOtpConfigAsync()
     {

@@ -6,6 +6,7 @@ UPDATE users SET mfa_enabled = false, mfa_method = null WHERE mfa_enabled = true
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS mfa_totp_secret TEXT,
   ADD COLUMN IF NOT EXISTS mfa_totp_enrolled BOOLEAN NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS mfa_totp_last_used_step BIGINT,
   DROP COLUMN IF EXISTS phone_number,
   DROP COLUMN IF EXISTS phone_verified;
 
@@ -21,6 +22,7 @@ CREATE INDEX IF NOT EXISTS idx_mfa_challenges_type
 
 INSERT INTO security_config (config_key, config_value, description) VALUES
   ('mfa_email_otp_expiry_minutes', '10', 'Email OTP validity window in minutes'),
+  ('mfa_otp_length', '6', 'Number of digits in email OTP codes'),
   ('mfa_totp_issuer', 'FlatPlanet', 'Issuer name shown in authenticator apps'),
   ('mfa_max_otp_attempts', '5', 'Max wrong OTP attempts before challenge expires')
 ON CONFLICT (config_key) DO NOTHING;

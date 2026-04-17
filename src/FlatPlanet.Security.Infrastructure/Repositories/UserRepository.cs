@@ -195,11 +195,20 @@ public class UserRepository : IUserRepository
             new { Enrolled = enrolled, Id = userId });
     }
 
-    public async Task ResetMfaColumnsAsync(Guid userId)
+    public async Task UpdateMfaTotpLastUsedStepAsync(Guid userId, long step)
     {
         using var conn = await _db.CreateConnectionAsync();
         await conn.ExecuteAsync(
-            "UPDATE users SET mfa_enabled = false, mfa_method = null, mfa_totp_secret = null, mfa_totp_enrolled = false WHERE id = @Id",
+            "UPDATE users SET mfa_totp_last_used_step = @Step WHERE id = @Id",
+            new { Step = step, Id = userId });
+    }
+
+    public async Task<bool> ResetMfaColumnsAsync(Guid userId)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        var rows = await conn.ExecuteAsync(
+            "UPDATE users SET mfa_enabled = false, mfa_method = null, mfa_totp_secret = null, mfa_totp_enrolled = false, mfa_totp_last_used_step = null WHERE id = @Id",
             new { Id = userId });
+        return rows > 0;
     }
 }

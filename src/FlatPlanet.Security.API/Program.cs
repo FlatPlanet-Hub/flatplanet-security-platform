@@ -212,6 +212,7 @@ builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
 builder.Services.AddScoped<IBusinessMembershipService, BusinessMembershipService>();
 builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 builder.Services.AddSingleton<ITotpSecretEncryptor, TotpSecretEncryptor>();
+builder.Services.AddSingleton<ITotpVerifier, TotpVerifier>();
 builder.Services.AddScoped<IMfaService, MfaService>();
 builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationService>();
 builder.Services.AddHostedService<AuditLogCleanupService>();

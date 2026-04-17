@@ -24,5 +24,7 @@ public interface IUserRepository
     Task UpdateMfaEnabledAsync(Guid userId, bool enabled);
     Task UpdateMfaTotpSecretAsync(Guid userId, string encryptedSecret);
     Task SetMfaTotpEnrolledAsync(Guid userId, bool enrolled);
-    Task ResetMfaColumnsAsync(Guid userId);
+    Task UpdateMfaTotpLastUsedStepAsync(Guid userId, long step);
+    /// <summary>Returns false if the user was not found.</summary>
+    Task<bool> ResetMfaColumnsAsync(Guid userId);
 }
