@@ -111,8 +111,10 @@ public class MfaService : IMfaService
             throw new UnauthorizedAccessException("TOTP code has already been used. Wait for the next code.");
         }
 
-        await _users.UpdateMfaTotpLastUsedStepAsync(userId, matchedStep);
-        await _users.SetMfaTotpEnrolledAsync(userId, true);
+        // BR-2: Single atomic UPDATE — sets enrolled=true, mfa_method='totp', and last_used_step together.
+        // Splitting these across two writes could leave last_used_step committed but enrolled=false,
+        // causing the next valid code to be rejected as a replay.
+        await _users.CompleteTotpEnrolmentAsync(userId, matchedStep);
         await _identityVerification.SyncStatusAsync(userId, true);
 
         var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
@@ -158,6 +160,11 @@ public class MfaService : IMfaService
         // P1-2: Reject if TOTP enrolment was not completed
         if (!user.MfaTotpEnrolled)
             throw new InvalidOperationException("TOTP is not enrolled for this account.");
+
+        // BR-1: Status check — [AllowAnonymous] means no middleware protection on this endpoint.
+        // A user suspended after the MFA gate in LoginAsync must be rejected here.
+        if (user.Status != "active")
+            throw new ForbiddenException($"User account is {user.Status}.");
 
         if (string.IsNullOrEmpty(user.MfaTotpSecret))
             throw new InvalidOperationException("TOTP is not configured for this account.");
@@ -424,14 +431,11 @@ public class MfaService : IMfaService
 
     private async Task<(int expiryMinutes, int otpLength)> GetEmailOtpConfigAsync()
     {
-        return await _cache.GetOrCreateAsync("mfa_email_otp_config", async entry =>
-        {
-            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
-            var raw = (await _securityConfig.GetAllAsync()).ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
-            int Cfg(string key, int def) =>
-                raw.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
-            return (Cfg("mfa_email_otp_expiry_minutes", 10), Cfg("mfa_otp_length", 6));
-        });
+        // BR-3: Delegate to the shared config cache instead of doing a separate GetAllAsync.
+        var config = await LoadConfigAsync();
+        int Cfg(string key, int def) =>
+            config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
+        return (Cfg("mfa_email_otp_expiry_minutes", 10), Cfg("mfa_otp_length", 6));
     }
 
     private async Task<int> GetMaxAttemptsAsync()
@@ -453,6 +457,20 @@ public class MfaService : IMfaService
         }) ?? "FlatPlanet";
     }
 
-    private static string GenerateOtp(int length) =>
-        string.Join("", RandomNumberGenerator.GetBytes(length).Select(b => (b % 10).ToString()));
+    private static string GenerateOtp(int length)
+    {
+        // N-1: Rejection sampling — skip bytes 250-255 to eliminate modulo bias (256 % 10 != 0).
+        var digits = new char[length];
+        var filled = 0;
+        while (filled < length)
+        {
+            foreach (var b in RandomNumberGenerator.GetBytes((length - filled) * 2))
+            {
+                if (filled >= length) break;
+                if (b < 250)
+                    digits[filled++] = (char)('0' + b % 10);
+            }
+        }
+        return new string(digits);
+    }
 }

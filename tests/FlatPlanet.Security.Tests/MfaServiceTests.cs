@@ -333,7 +333,7 @@ public class MfaServiceTests
 
         _users.Setup(u => u.GetByIdAsync(userId))
             .ReturnsAsync(new User { Id = userId, Email = "user@test.com", FullName = "Test", CompanyId = Guid.NewGuid(),
-                MfaTotpEnrolled = true, MfaTotpSecret = "encrypted", MfaTotpLastUsedStep = null });
+                Status = "active", MfaTotpEnrolled = true, MfaTotpSecret = "encrypted", MfaTotpLastUsedStep = null });
         _encryptor.Setup(e => e.Decrypt("encrypted")).Returns(secretBytes);
         _totpVerifier.Setup(t => t.Verify(secretBytes, "123456", out matchedStep)).Returns(true);
         _users.Setup(u => u.UpdateMfaTotpLastUsedStepAsync(userId, matchedStep)).Returns(Task.CompletedTask);
@@ -402,6 +402,19 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            svc.VerifyLoginTotpAsync(userId, "123456", null, null));
+    }
+
+    [Fact]
+    public async Task VerifyLoginTotp_ShouldThrow_WhenUserSuspended()
+    {
+        var userId = Guid.NewGuid();
+
+        _users.Setup(u => u.GetByIdAsync(userId))
+            .ReturnsAsync(new User { Id = userId, MfaTotpEnrolled = true, Status = "suspended" });
+
+        var svc = CreateService();
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
             svc.VerifyLoginTotpAsync(userId, "123456", null, null));
     }
 

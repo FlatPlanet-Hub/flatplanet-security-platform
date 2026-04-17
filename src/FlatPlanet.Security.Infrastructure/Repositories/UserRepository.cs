@@ -203,6 +203,14 @@ public class UserRepository : IUserRepository
             new { Step = step, Id = userId });
     }
 
+    public async Task CompleteTotpEnrolmentAsync(Guid userId, long lastUsedStep)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET mfa_totp_enrolled = true, mfa_enabled = true, mfa_method = 'totp', mfa_totp_last_used_step = @Step WHERE id = @Id",
+            new { Step = lastUsedStep, Id = userId });
+    }
+
     public async Task<bool> ResetMfaColumnsAsync(Guid userId)
     {
         using var conn = await _db.CreateConnectionAsync();
