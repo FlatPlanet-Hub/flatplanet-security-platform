@@ -28,4 +28,5 @@ public interface IMfaService
     // Admin
     Task DisableMfaAsync(Guid userId);
     Task ResetMfaAsync(Guid userId);
+    Task SetMfaMethodAsync(Guid userId, string method, Guid performedByUserId);
 }

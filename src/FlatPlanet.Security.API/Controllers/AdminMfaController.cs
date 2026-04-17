@@ -1,3 +1,4 @@
+using FlatPlanet.Security.Application.DTOs.Mfa;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -25,5 +26,12 @@ public class AdminMfaController : ApiController
     {
         await _mfa.ResetMfaAsync(userId);
         return OkData(new { message = "MFA reset for user. User must re-enrol." });
+    }
+
+    [HttpPost("{userId}/set-method")]
+    public async Task<IActionResult> SetMfaMethod(Guid userId, [FromBody] SetMfaMethodRequest request)
+    {
+        await _mfa.SetMfaMethodAsync(userId, request.Method, GetUserId());
+        return OkData(new { message = $"MFA method set to '{request.Method}'. User must complete enrolment on next login." });
     }
 }

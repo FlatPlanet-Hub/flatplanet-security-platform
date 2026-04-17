@@ -6,6 +6,12 @@ public class LoginResponse
     public string? MfaMethod { get; set; }
     public bool MfaEnrolmentPending { get; set; }
     public Guid? ChallengeId { get; set; }
+    /// <summary>
+    /// True only when this response is the result of a successful TOTP enrolment completion.
+    /// Always false on standard login and MFA-verify responses — does not indicate whether
+    /// the user has MFA configured; use GET /mfa/status for that.
+    /// </summary>
+    public bool MfaEnrolled { get; set; }
     public string AccessToken { get; set; } = string.Empty;
     public string RefreshToken { get; set; } = string.Empty;
     public int ExpiresIn { get; set; }

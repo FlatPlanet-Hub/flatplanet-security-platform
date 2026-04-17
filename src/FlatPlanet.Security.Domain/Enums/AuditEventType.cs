@@ -34,5 +34,6 @@ public static class AuditEventType
     public const string MfaDisabled = "mfa_disabled";
     public const string MfaReset = "mfa_reset";
     public const string MfaBackupCodesGenerated = "mfa_backup_codes_generated";
+    public const string MfaMethodSet = "mfa_method_set";
     public const string IdentityVerificationCompleted = "identity_verification_completed";
 }

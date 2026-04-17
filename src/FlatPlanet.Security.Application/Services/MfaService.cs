@@ -139,6 +139,7 @@ public class MfaService : IMfaService
 
         return new LoginResponse
         {
+            MfaEnrolled        = true,
             AccessToken        = accessToken,
             RefreshToken       = refreshTokenPlain,
             ExpiresIn          = Cfg("jwt_access_expiry_minutes", 60) * 60,
@@ -461,6 +462,25 @@ public class MfaService : IMfaService
     }
 
     // ── Admin ────────────────────────────────────────────────────────────────
+
+    public async Task SetMfaMethodAsync(Guid userId, string method, Guid performedByUserId)
+    {
+        var found = await _users.SetMfaMethodAsync(userId, method);
+        if (!found)
+            throw new KeyNotFoundException("User not found.");
+
+        // Invalidate any in-flight challenges — their type may no longer match the new method.
+        await _challenges.InvalidateActiveByTypeAsync(userId, "email_otp");
+
+        await Task.WhenAll(
+            _backupCodes.DeleteAllByUserAsync(userId),
+            _auditLog.LogAsync(new AuthAuditLog
+            {
+                UserId    = userId,
+                EventType = AuditEventType.MfaMethodSet,
+                Details   = JsonSerializer.Serialize(new { method, performed_by = performedByUserId })
+            }));
+    }
 
     public async Task DisableMfaAsync(Guid userId)
     {

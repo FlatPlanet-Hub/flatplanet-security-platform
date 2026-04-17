@@ -219,4 +219,20 @@ public class UserRepository : IUserRepository
             new { Id = userId });
         return rows > 0;
     }
+
+    public async Task<bool> SetMfaMethodAsync(Guid userId, string method)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        // Always clear TOTP columns so any method switch forces fresh enrolment.
+        var rows = await conn.ExecuteAsync(
+            @"UPDATE users
+              SET mfa_enabled = true,
+                  mfa_method = @Method,
+                  mfa_totp_enrolled = false,
+                  mfa_totp_secret = null,
+                  mfa_totp_last_used_step = null
+              WHERE id = @Id",
+            new { Method = method, Id = userId });
+        return rows > 0;
+    }
 }
