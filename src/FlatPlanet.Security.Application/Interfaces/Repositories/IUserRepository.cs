@@ -21,6 +21,12 @@ public interface IUserRepository
     Task<User> CreateAsync(User user);
     Task UpdatePasswordHashAsync(Guid userId, string passwordHash);
     Task UpdatePasswordHashAsync(Guid userId, string passwordHash, System.Data.IDbConnection conn, System.Data.IDbTransaction tx);
-    Task UpdatePhoneNumberAsync(Guid userId, string phoneNumber);
     Task UpdateMfaEnabledAsync(Guid userId, bool enabled);
+    Task UpdateMfaTotpSecretAsync(Guid userId, string encryptedSecret);
+    Task SetMfaTotpEnrolledAsync(Guid userId, bool enrolled);
+    Task UpdateMfaTotpLastUsedStepAsync(Guid userId, long step);
+    /// <summary>Atomically marks TOTP as enrolled and records the last-used step in a single UPDATE.</summary>
+    Task CompleteTotpEnrolmentAsync(Guid userId, long lastUsedStep);
+    /// <summary>Returns false if the user was not found.</summary>
+    Task<bool> ResetMfaColumnsAsync(Guid userId);
 }

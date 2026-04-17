@@ -25,11 +25,11 @@ public class IdentityVerificationRepository : IIdentityVerificationRepository
         await conn.ExecuteAsync(
             """
             INSERT INTO identity_verification_status
-                (user_id, otp_verified, video_verified, fully_verified, verified_at, updated_at)
+                (user_id, mfa_verified, video_verified, fully_verified, verified_at, updated_at)
             VALUES
-                (@UserId, @OtpVerified, @VideoVerified, @FullyVerified, @VerifiedAt, @UpdatedAt)
+                (@UserId, @MfaVerified, @VideoVerified, @FullyVerified, @VerifiedAt, @UpdatedAt)
             ON CONFLICT (user_id) DO UPDATE SET
-                otp_verified   = EXCLUDED.otp_verified,
+                mfa_verified   = EXCLUDED.mfa_verified,
                 video_verified = EXCLUDED.video_verified,
                 fully_verified = EXCLUDED.fully_verified,
                 verified_at    = COALESCE(identity_verification_status.verified_at, EXCLUDED.verified_at),

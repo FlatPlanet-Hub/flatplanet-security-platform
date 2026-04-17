@@ -11,31 +11,27 @@ namespace FlatPlanet.Security.Application.Services;
 public class IdentityVerificationService : IIdentityVerificationService
 {
     private readonly IIdentityVerificationRepository _repo;
-    private readonly IMfaChallengeRepository _mfaChallenges;
     private readonly ISecurityConfigRepository _securityConfig;
     private readonly IAuditLogRepository _auditLog;
     private readonly IMemoryCache _cache;
 
     public IdentityVerificationService(
         IIdentityVerificationRepository repo,
-        IMfaChallengeRepository mfaChallenges,
         ISecurityConfigRepository securityConfig,
         IAuditLogRepository auditLog,
         IMemoryCache cache)
     {
         _repo = repo;
-        _mfaChallenges = mfaChallenges;
         _securityConfig = securityConfig;
         _auditLog = auditLog;
         _cache = cache;
     }
 
-    public async Task SyncStatusAsync(Guid userId)
+    public async Task SyncStatusAsync(Guid userId, bool mfaTotpEnrolled)
     {
-        var requireVideo = await GetRequireVideoAsync();
-        var otpVerified  = await _mfaChallenges.HasVerifiedChallengeAsync(userId);
+        var requireVideo  = await GetRequireVideoAsync();
         var videoVerified = false;
-        var fullyVerified = otpVerified && (!requireVideo || videoVerified);
+        var fullyVerified = mfaTotpEnrolled && (!requireVideo || videoVerified);
 
         var existing = await _repo.GetByUserIdAsync(userId);
         var wasFullyVerified = existing?.FullyVerified ?? false;
@@ -44,7 +40,7 @@ public class IdentityVerificationService : IIdentityVerificationService
         var record = new IdentityVerificationStatus
         {
             UserId        = userId,
-            OtpVerified   = otpVerified,
+            MfaVerified   = mfaTotpEnrolled,
             VideoVerified = videoVerified,
             FullyVerified = fullyVerified,
             VerifiedAt    = fullyVerified && !wasFullyVerified ? now : existing?.VerifiedAt,
@@ -55,11 +51,11 @@ public class IdentityVerificationService : IIdentityVerificationService
 
         if (fullyVerified && !wasFullyVerified)
         {
-            await _auditLog.LogAsync(new Domain.Entities.AuthAuditLog
+            await _auditLog.LogAsync(new AuthAuditLog
             {
                 UserId    = userId,
                 EventType = AuditEventType.IdentityVerificationCompleted,
-                Details   = JsonSerializer.Serialize(new { otpVerified, videoVerified })
+                Details   = JsonSerializer.Serialize(new { mfaTotpEnrolled, videoVerified })
             });
         }
     }
@@ -72,11 +68,11 @@ public class IdentityVerificationService : IIdentityVerificationService
 
         // Recompute fullyVerified from current config — do NOT trust stored DB value
         var requireVideo  = await GetRequireVideoAsync();
-        var fullyVerified = existing.OtpVerified && (!requireVideo || existing.VideoVerified);
+        var fullyVerified = existing.MfaVerified && (!requireVideo || existing.VideoVerified);
 
         return new IdentityVerificationStatusDto
         {
-            OtpVerified   = existing.OtpVerified,
+            MfaVerified   = existing.MfaVerified,
             VideoVerified = existing.VideoVerified,
             FullyVerified = fullyVerified,
             VerifiedAt    = existing.VerifiedAt

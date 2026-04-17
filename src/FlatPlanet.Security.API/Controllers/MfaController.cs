@@ -2,6 +2,7 @@ using FlatPlanet.Security.Application.DTOs.Mfa;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace FlatPlanet.Security.API.Controllers;
 
@@ -13,29 +14,81 @@ public class MfaController : ApiController
 
     public MfaController(IMfaService mfa) => _mfa = mfa;
 
-    [HttpPost("enroll")]
+    // ── Status ───────────────────────────────────────────────────────────────
+
+    [HttpGet("status")]
     [Authorize]
-    public async Task<IActionResult> Enroll([FromBody] EnrollPhoneRequest request)
+    public async Task<IActionResult> GetStatus()
     {
-        var result = await _mfa.EnrollAndSendOtpAsync(GetUserId(), request.PhoneNumber);
+        var result = await _mfa.GetMfaStatusAsync(GetUserId());
         return OkData(result);
     }
 
-    [HttpPost("otp/verify")]
+    // ── TOTP Enrolment ───────────────────────────────────────────────────────
+
+    [HttpPost("totp/begin-enrol")]
     [Authorize]
-    public async Task<IActionResult> VerifyOtp([FromBody] VerifyOtpRequest request)
+    public async Task<IActionResult> BeginTotpEnrolment()
     {
-        await _mfa.VerifyOtpAsync(GetUserId(), request.Code);
-        return OkData(new { message = "MFA enrollment verified. MFA is now enabled on your account." });
+        var result = await _mfa.BeginTotpEnrolmentAsync(GetUserId());
+        return OkData(result);
     }
 
-    [HttpPost("otp/login-verify")]
-    [AllowAnonymous]
-    public async Task<IActionResult> LoginVerify([FromBody] MfaLoginVerifyRequest request)
+    [HttpPost("totp/verify-enrol")]
+    [Authorize]
+    [EnableRateLimiting("mfa-verify")]
+    public async Task<IActionResult> VerifyTotpEnrolment([FromBody] VerifyTotpEnrolmentRequest request)
     {
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
         var userAgent = Request.Headers.UserAgent.ToString();
-        var result = await _mfa.VerifyLoginOtpAsync(request.ChallengeId, request.Code, ipAddress, userAgent);
+        var result = await _mfa.VerifyTotpEnrolmentAsync(GetUserId(), request.TotpCode, ipAddress, userAgent);
+        return OkData(result);
+    }
+
+    // ── TOTP Login ───────────────────────────────────────────────────────────
+
+    [HttpPost("totp/login-verify")]
+    [AllowAnonymous]
+    [EnableRateLimiting("mfa-verify")]
+    public async Task<IActionResult> VerifyLoginTotp([FromBody] VerifyLoginTotpRequest request)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers.UserAgent.ToString();
+        var result = await _mfa.VerifyLoginTotpAsync(request.UserId, request.TotpCode, ipAddress, userAgent);
+        return OkData(result);
+    }
+
+    // ── Email OTP Login ──────────────────────────────────────────────────────
+
+    [HttpPost("email-otp/login-verify")]
+    [AllowAnonymous]
+    [EnableRateLimiting("mfa-verify")]
+    public async Task<IActionResult> VerifyLoginEmailOtp([FromBody] MfaLoginVerifyRequest request)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers.UserAgent.ToString();
+        var result = await _mfa.VerifyLoginEmailOtpAsync(request.ChallengeId, request.OtpCode, ipAddress, userAgent);
+        return OkData(result);
+    }
+
+    // ── Backup Codes ─────────────────────────────────────────────────────────
+
+    [HttpPost("backup-codes/generate")]
+    [Authorize]
+    public async Task<IActionResult> GenerateBackupCodes()
+    {
+        var result = await _mfa.GenerateBackupCodesAsync(GetUserId());
+        return OkData(result);
+    }
+
+    [HttpPost("backup-code/login-verify")]
+    [AllowAnonymous]
+    [EnableRateLimiting("mfa-verify")]
+    public async Task<IActionResult> VerifyBackupCode([FromBody] VerifyBackupCodeRequest request)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers.UserAgent.ToString();
+        var result = await _mfa.VerifyBackupCodeAsync(request.UserId, request.BackupCode, ipAddress, userAgent);
         return OkData(result);
     }
 }

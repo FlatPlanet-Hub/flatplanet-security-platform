@@ -30,5 +30,9 @@ public static class AuditEventType
     public const string MfaVerified = "mfa_verified";
     public const string MfaFailed = "mfa_failed";
     public const string MfaLoginVerified = "mfa_login_verified";
+    public const string MfaEnrolmentComplete = "mfa_enrolment_complete";
+    public const string MfaDisabled = "mfa_disabled";
+    public const string MfaReset = "mfa_reset";
+    public const string MfaBackupCodesGenerated = "mfa_backup_codes_generated";
     public const string IdentityVerificationCompleted = "identity_verification_completed";
 }

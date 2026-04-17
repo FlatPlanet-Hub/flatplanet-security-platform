@@ -11,9 +11,10 @@ public class User
     public string Status { get; set; } = "active";
     public DateTime CreatedAt { get; set; }
     public DateTime? LastSeenAt { get; set; }
-    public string? PhoneNumber { get; set; }
-    public bool PhoneVerified { get; set; }
     public bool MfaEnabled { get; set; }
     public string? MfaMethod { get; set; }
+    public string? MfaTotpSecret { get; set; }
+    public bool MfaTotpEnrolled { get; set; }
+    public long? MfaTotpLastUsedStep { get; set; }
     public DateTime? PasswordChangedAt { get; set; }
 }

@@ -36,6 +36,35 @@ public class SmtpEmailService : IEmailService
         await SendWithRetryAsync(message);
     }
 
+    public async Task SendMfaOtpEmailAsync(string toEmail, string otpCode, int expiryMinutes)
+    {
+        var message = BuildMfaOtpMessage(toEmail, otpCode, expiryMinutes);
+        await SendWithRetryAsync(message);
+    }
+
+    private MimeMessage BuildMfaOtpMessage(string toEmail, string otpCode, int expiryMinutes)
+    {
+        var message = new MimeMessage();
+        message.From.Add(new MailboxAddress(_options.FromName, _options.FromEmail));
+        message.To.Add(MailboxAddress.Parse(toEmail));
+        message.Subject = "Your FlatPlanet login code";
+
+        message.Body = new TextPart("plain")
+        {
+            Text = $"""
+                Your FlatPlanet login verification code is:
+
+                {otpCode}
+
+                This code expires in {expiryMinutes} minutes.
+
+                If you did not attempt to log in, please ignore this email and consider changing your password.
+                """
+        };
+
+        return message;
+    }
+
     private MimeMessage BuildPasswordResetMessage(string toEmail, string resetLink)
     {
         var message = new MimeMessage();

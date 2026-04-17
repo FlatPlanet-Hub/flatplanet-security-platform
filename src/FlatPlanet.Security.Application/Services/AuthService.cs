@@ -29,6 +29,7 @@ public class AuthService : IAuthService
     private readonly IPasswordResetTokenRepository _resetTokens;
     private readonly IEmailService _emailService;
     private readonly IAppRepository _apps;
+    private readonly IMfaService _mfa;
     private readonly IMemoryCache _cache;
     private readonly ILogger<AuthService> _logger;
 
@@ -48,6 +49,7 @@ public class AuthService : IAuthService
         IPasswordResetTokenRepository resetTokens,
         IEmailService emailService,
         IAppRepository apps,
+        IMfaService mfa,
         IMemoryCache cache,
         ILogger<AuthService> logger)
     {
@@ -66,6 +68,7 @@ public class AuthService : IAuthService
         _resetTokens = resetTokens;
         _emailService = emailService;
         _apps = apps;
+        _mfa = mfa;
         _cache = cache;
         _logger = logger;
     }
@@ -134,6 +137,21 @@ public class AuthService : IAuthService
             ?? throw new UnauthorizedAccessException("Company not found.");
         if (company.Status != "active")
             throw new ForbiddenException($"Company account is {company.Status}.");
+
+        // MFA gate — intercept before session creation
+        if (user.MfaEnabled)
+        {
+            // U1 fix: only gate on TOTP if the method is 'totp' — email_otp users always have MfaTotpEnrolled=false
+            if (user.MfaMethod == "totp" && !user.MfaTotpEnrolled)
+                return new LoginResponse { RequiresMfa = true, MfaEnrolmentPending = true, MfaMethod = "totp" };
+
+            if (user.MfaMethod == "totp")
+                return new LoginResponse { RequiresMfa = true, MfaMethod = "totp", User = new UserProfileDto { UserId = user.Id } };
+
+            // email_otp: send challenge and return challenge ID
+            var challenge = await _mfa.SendEmailOtpAsync(user.Id, ipAddress);
+            return new LoginResponse { RequiresMfa = true, MfaMethod = "email_otp", ChallengeId = challenge.Id, User = new UserProfileDto { UserId = user.Id } };
+        }
 
         // Create session + refresh token in a transaction (with atomic session eviction)
         var maxSessions       = Cfg("max_concurrent_sessions", 3);
