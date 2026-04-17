@@ -277,8 +277,10 @@ public class MfaService : IMfaService
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
 
+        // P2-02: Do not reveal whether email OTP is configured — return the same error as an
+        // invalid userId so callers cannot probe MFA method by trying the resend endpoint.
         if (!user.MfaEnabled || user.MfaMethod != "email_otp")
-            throw new InvalidOperationException("Email OTP is not enabled for this account.");
+            throw new KeyNotFoundException("User not found.");
 
         // Delegates to SendEmailOtpAsync which invalidates the old challenge and sends a fresh one.
         return await SendEmailOtpAsync(userId, ipAddress);
@@ -469,18 +471,19 @@ public class MfaService : IMfaService
         if (!found)
             throw new KeyNotFoundException("User not found.");
 
+        // Audit first — if cleanup fails the action is still recorded.
+        await _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId    = userId,
+            EventType = AuditEventType.MfaMethodSet,
+            Details   = JsonSerializer.Serialize(new { method, performed_by = performedByUserId })
+        });
+
         // Invalidate in-flight email_otp challenges — the only challenge type in the system.
         // TOTP has no challenge record (it is stateless), so no second invalidation is needed.
-        await _challenges.InvalidateActiveByTypeAsync(userId, "email_otp");
-
         await Task.WhenAll(
-            _backupCodes.DeleteAllByUserAsync(userId),
-            _auditLog.LogAsync(new AuthAuditLog
-            {
-                UserId    = userId,
-                EventType = AuditEventType.MfaMethodSet,
-                Details   = JsonSerializer.Serialize(new { method, performed_by = performedByUserId })
-            }));
+            _challenges.InvalidateActiveByTypeAsync(userId, "email_otp"),
+            _backupCodes.DeleteAllByUserAsync(userId));
     }
 
     public async Task DisableMfaAsync(Guid userId)
