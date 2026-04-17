@@ -28,6 +28,7 @@ public class MfaController : ApiController
 
     [HttpPost("totp/begin-enrol")]
     [Authorize]
+    [EnableRateLimiting("mfa-verify")]
     public async Task<IActionResult> BeginTotpEnrolment()
     {
         var result = await _mfa.BeginTotpEnrolmentAsync(GetUserId());
@@ -58,7 +59,17 @@ public class MfaController : ApiController
         return OkData(result);
     }
 
-    // ── Email OTP Login ──────────────────────────────────────────────────────
+    // ── Email OTP ────────────────────────────────────────────────────────────
+
+    [HttpPost("email-otp/resend")]
+    [AllowAnonymous]
+    [EnableRateLimiting("mfa-verify")]
+    public async Task<IActionResult> ResendEmailOtp([FromBody] ResendEmailOtpRequest request)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var result = await _mfa.ResendEmailOtpAsync(request.UserId, ipAddress);
+        return OkData(new { challengeId = result.Id });
+    }
 
     [HttpPost("email-otp/login-verify")]
     [AllowAnonymous]

@@ -271,6 +271,18 @@ public class MfaService : IMfaService
         return challenge;
     }
 
+    public async Task<MfaChallenge> ResendEmailOtpAsync(Guid userId, string? ipAddress)
+    {
+        var user = await _users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        if (!user.MfaEnabled || user.MfaMethod != "email_otp")
+            throw new InvalidOperationException("Email OTP is not enabled for this account.");
+
+        // Delegates to SendEmailOtpAsync which invalidates the old challenge and sends a fresh one.
+        return await SendEmailOtpAsync(userId, ipAddress);
+    }
+
     public async Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent)
     {
         var challenge = await _challenges.GetByIdAsync(challengeId)
