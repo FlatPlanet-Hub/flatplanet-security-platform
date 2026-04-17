@@ -469,7 +469,8 @@ public class MfaService : IMfaService
         if (!found)
             throw new KeyNotFoundException("User not found.");
 
-        // Invalidate any in-flight challenges — their type may no longer match the new method.
+        // Invalidate in-flight email_otp challenges — the only challenge type in the system.
+        // TOTP has no challenge record (it is stateless), so no second invalidation is needed.
         await _challenges.InvalidateActiveByTypeAsync(userId, "email_otp");
 
         await Task.WhenAll(

@@ -450,6 +450,37 @@ public class MfaServiceTests
         await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.ResetMfaAsync(userId));
     }
 
+    [Fact]
+    public async Task SetMfaMethod_ShouldSetMethodAndCleanUp_WhenUserFound()
+    {
+        var userId = Guid.NewGuid();
+        var adminId = Guid.NewGuid();
+        _users.Setup(u => u.SetMfaMethodAsync(userId, "email_otp")).ReturnsAsync(true);
+        _challenges.Setup(c => c.InvalidateActiveByTypeAsync(userId, "email_otp")).Returns(Task.CompletedTask);
+        _backupCodes.Setup(b => b.DeleteAllByUserAsync(userId)).Returns(Task.CompletedTask);
+        _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
+
+        var svc = CreateService();
+        await svc.SetMfaMethodAsync(userId, "email_otp", adminId);
+
+        _users.Verify(u => u.SetMfaMethodAsync(userId, "email_otp"), Times.Once);
+        _challenges.Verify(c => c.InvalidateActiveByTypeAsync(userId, "email_otp"), Times.Once);
+        _backupCodes.Verify(b => b.DeleteAllByUserAsync(userId), Times.Once);
+        _auditLog.Verify(a => a.LogAsync(It.Is<AuthAuditLog>(l =>
+            l.UserId == userId && l.EventType == "mfa_method_set")), Times.Once);
+    }
+
+    [Fact]
+    public async Task SetMfaMethod_ShouldThrow_WhenUserNotFound()
+    {
+        var userId = Guid.NewGuid();
+        _users.Setup(u => u.SetMfaMethodAsync(userId, "email_otp")).ReturnsAsync(false);
+
+        var svc = CreateService();
+        await Assert.ThrowsAsync<KeyNotFoundException>(() =>
+            svc.SetMfaMethodAsync(userId, "email_otp", Guid.NewGuid()));
+    }
+
     // ── VerifyLoginTotpAsync ─────────────────────────────────────────────────
 
     [Fact]
