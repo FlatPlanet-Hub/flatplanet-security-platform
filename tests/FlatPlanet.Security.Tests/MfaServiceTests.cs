@@ -144,6 +144,7 @@ public class MfaServiceTests
         var result = await svc.VerifyTotpEnrolmentAsync(userId, "123456", "1.2.3.4", "agent");
 
         Assert.Equal("access-token", result.AccessToken);
+        Assert.True(result.MfaEnrolled);
         _users.Verify(u => u.CompleteTotpEnrolmentAsync(userId, matchedStep), Times.Once);
         _identityVerification.Verify(iv => iv.SyncStatusAsync(userId, true), Times.Once);
     }
@@ -257,6 +258,53 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.SendEmailOtpAsync(userId, null));
+    }
+
+    // ── ResendEmailOtpAsync ──────────────────────────────────────────────────
+
+    [Fact]
+    public async Task ResendEmailOtp_ShouldThrow_WhenUserNotFound()
+    {
+        var userId = Guid.NewGuid();
+        _users.Setup(u => u.GetByIdAsync(userId)).ReturnsAsync((User?)null);
+
+        var svc = CreateService();
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.ResendEmailOtpAsync(userId, null));
+    }
+
+    [Fact]
+    public async Task ResendEmailOtp_ShouldThrow_WhenEmailOtpNotEnabled()
+    {
+        var userId = Guid.NewGuid();
+        // TOTP user — email OTP not configured
+        _users.Setup(u => u.GetByIdAsync(userId))
+            .ReturnsAsync(new User { Id = userId, MfaEnabled = true, MfaMethod = "totp", Status = "active" });
+
+        var svc = CreateService();
+        // P2-02: Must return same error as user-not-found to prevent MFA method disclosure
+        await Assert.ThrowsAsync<KeyNotFoundException>(() => svc.ResendEmailOtpAsync(userId, null));
+    }
+
+    [Fact]
+    public async Task ResendEmailOtp_ShouldSendOtp_WhenEmailOtpEnabled()
+    {
+        var userId = Guid.NewGuid();
+        SetupConfig();
+        _users.Setup(u => u.GetByIdAsync(userId))
+            .ReturnsAsync(new User { Id = userId, Email = "user@test.com", MfaEnabled = true, MfaMethod = "email_otp", Status = "active" });
+        _challenges.Setup(c => c.InvalidateActiveByTypeAsync(userId, "email_otp")).Returns(Task.CompletedTask);
+        _jwt.Setup(j => j.HashToken(It.IsAny<string>())).Returns("otp-hash");
+        _challenges.Setup(c => c.CreateAsync(It.IsAny<MfaChallenge>()))
+            .ReturnsAsync((MfaChallenge ch) => { ch.Id = Guid.NewGuid(); return ch; });
+        _email.Setup(e => e.SendMfaOtpEmailAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>()))
+            .Returns(Task.CompletedTask);
+        _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
+
+        var svc = CreateService();
+        var result = await svc.ResendEmailOtpAsync(userId, null);
+
+        Assert.NotEqual(Guid.Empty, result.Id);
+        _email.Verify(e => e.SendMfaOtpEmailAsync("user@test.com", It.IsAny<string>(), It.IsAny<int>()), Times.Once);
     }
 
     // ── VerifyLoginEmailOtpAsync ─────────────────────────────────────────────
