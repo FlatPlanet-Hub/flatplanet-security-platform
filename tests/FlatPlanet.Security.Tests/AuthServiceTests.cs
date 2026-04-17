@@ -32,6 +32,7 @@ public class AuthServiceTests
     private readonly Mock<IPasswordResetTokenRepository> _resetTokens = new();
     private readonly Mock<IEmailService> _emailService = new();
     private readonly Mock<IAppRepository> _apps = new();
+    private readonly Mock<IMfaService> _mfa = new();
     private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
     private readonly Mock<ILogger<AuthService>> _logger = new();
 
@@ -40,7 +41,8 @@ public class AuthServiceTests
         _sessions.Object, _refreshTokens.Object,
         _loginAttempts.Object, _auditLog.Object, _securityConfig.Object,
         _roles.Object, _db.Object, _companies.Object, _userContext.Object,
-        _resetTokens.Object, _emailService.Object, _apps.Object, _cache, _logger.Object);
+        _resetTokens.Object, _emailService.Object, _apps.Object, _mfa.Object,
+        _cache, _logger.Object);
 
     private void SetupDefaultConfig()
     {
@@ -87,7 +89,7 @@ public class AuthServiceTests
         _companies.Setup(c => c.GetByIdAsync(companyId))
             .ReturnsAsync(new Company { Id = companyId, Name = "Test Co", Status = "active" });
 
-        _sessions.Setup(s => s.CountActiveByUserAsync(userId)).ReturnsAsync(0);
+        _sessions.Setup(s => s.EvictOldestIfOverLimitAsync(userId, It.IsAny<int>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>())).Returns(Task.CompletedTask);
         _sessions.Setup(s => s.CreateAsync(It.IsAny<Session>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
             .ReturnsAsync((Session s, IDbConnection _, IDbTransaction _) => { s.Id = sessionId; return s; });
 

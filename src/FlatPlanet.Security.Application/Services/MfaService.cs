@@ -10,6 +10,7 @@ using FlatPlanet.Security.Domain.Entities;
 using FlatPlanet.Security.Domain.Enums;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using OtpNet;
 
 namespace FlatPlanet.Security.Application.Services;
 
@@ -17,7 +18,7 @@ public class MfaService : IMfaService
 {
     private readonly IMfaChallengeRepository _challenges;
     private readonly IUserRepository _users;
-    private readonly ISmsSender _sms;
+    private readonly IEmailService _email;
     private readonly ISecurityConfigRepository _securityConfig;
     private readonly IJwtService _jwt;
     private readonly IAuditLogRepository _auditLog;
@@ -26,13 +27,14 @@ public class MfaService : IMfaService
     private readonly IRoleRepository _roles;
     private readonly IDbConnectionFactory _db;
     private readonly IIdentityVerificationService _identityVerification;
+    private readonly ITotpSecretEncryptor _encryptor;
     private readonly IMemoryCache _cache;
     private readonly ILogger<MfaService> _logger;
 
     public MfaService(
         IMfaChallengeRepository challenges,
         IUserRepository users,
-        ISmsSender sms,
+        IEmailService email,
         ISecurityConfigRepository securityConfig,
         IJwtService jwt,
         IAuditLogRepository auditLog,
@@ -41,12 +43,13 @@ public class MfaService : IMfaService
         IRoleRepository roles,
         IDbConnectionFactory db,
         IIdentityVerificationService identityVerification,
+        ITotpSecretEncryptor encryptor,
         IMemoryCache cache,
         ILogger<MfaService> logger)
     {
         _challenges = challenges;
         _users = users;
-        _sms = sms;
+        _email = email;
         _securityConfig = securityConfig;
         _jwt = jwt;
         _auditLog = auditLog;
@@ -55,128 +58,200 @@ public class MfaService : IMfaService
         _roles = roles;
         _db = db;
         _identityVerification = identityVerification;
+        _encryptor = encryptor;
         _cache = cache;
         _logger = logger;
     }
 
-    public async Task<EnrollPhoneResponse> EnrollAndSendOtpAsync(Guid userId, string phoneNumber)
-    {
-        var (expiryMinutes, otpLength) = await GetOtpConfigAsync();
+    // ── TOTP Enrolment ───────────────────────────────────────────────────────
 
-        // Rate limit: if an active unexpired challenge exists, return it without issuing a new SMS
-        var existing = await _challenges.GetActiveByUserIdAsync(userId);
-        if (existing is not null)
-            return new EnrollPhoneResponse { MaskedPhone = MaskPhone(phoneNumber), ExpiresAt = existing.ExpiresAt };
+    public async Task<BeginTotpEnrolmentResponse> BeginTotpEnrolmentAsync(Guid userId)
+    {
+        var user = await _users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        if (user.MfaTotpEnrolled)
+            throw new InvalidOperationException("TOTP is already enrolled for this account.");
+
+        var secret = KeyGeneration.GenerateRandomKey(20);
+        var encrypted = _encryptor.Encrypt(secret);
+        await _users.UpdateMfaTotpSecretAsync(userId, encrypted);
+
+        var issuer = await GetTotpIssuerAsync();
+        var base32Secret = Base32Encoding.ToString(secret);
+        var qrCodeUri = $"otpauth://totp/{Uri.EscapeDataString(issuer)}:{Uri.EscapeDataString(user.Email)}?secret={base32Secret}&issuer={Uri.EscapeDataString(issuer)}&algorithm=SHA1&digits=6&period=30";
+
+        return new BeginTotpEnrolmentResponse { QrCodeUri = qrCodeUri };
+    }
+
+    public async Task<LoginResponse> VerifyTotpEnrolmentAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent)
+    {
+        var user = await _users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        if (string.IsNullOrEmpty(user.MfaTotpSecret))
+            throw new InvalidOperationException("TOTP enrolment has not been started. Call begin-enrol first.");
+
+        var secret = _encryptor.Decrypt(user.MfaTotpSecret);
+        var totp = new Totp(secret);
+        if (!totp.VerifyTotp(totpCode, out _, new VerificationWindow(1, 1)))
+        {
+            _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaFailed }));
+            throw new UnauthorizedAccessException("Invalid TOTP code.");
+        }
+
+        await _users.SetMfaTotpEnrolledAsync(userId, true);
+        await _identityVerification.SyncStatusAsync(userId, true);
+
+        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
+
+        _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId    = userId,
+            EventType = AuditEventType.MfaEnrolmentComplete,
+            IpAddress = ipAddress,
+            UserAgent = userAgent,
+            Details   = JsonSerializer.Serialize(new { method = "totp", session_id = session.Id })
+        }));
+
+        int Cfg(string key, int def) =>
+            config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
+
+        var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
+        var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
+
+        return new LoginResponse
+        {
+            AccessToken        = accessToken,
+            RefreshToken       = refreshTokenPlain,
+            ExpiresIn          = Cfg("jwt_access_expiry_minutes", 60) * 60,
+            IdleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30),
+            User               = new UserProfileDto
+            {
+                UserId    = user.Id,
+                Email     = user.Email,
+                FullName  = user.FullName,
+                CompanyId = user.CompanyId.ToString()
+            }
+        };
+    }
+
+    // ── TOTP Login ───────────────────────────────────────────────────────────
+
+    public async Task<LoginResponse> VerifyLoginTotpAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent)
+    {
+        var user = await _users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        if (string.IsNullOrEmpty(user.MfaTotpSecret))
+            throw new InvalidOperationException("TOTP is not configured for this account.");
+
+        var secret = _encryptor.Decrypt(user.MfaTotpSecret);
+        var totp = new Totp(secret);
+        if (!totp.VerifyTotp(totpCode, out _, new VerificationWindow(1, 1)))
+        {
+            _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaFailed, IpAddress = ipAddress }));
+            throw new UnauthorizedAccessException("Invalid TOTP code.");
+        }
+
+        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
+
+        int Cfg(string key, int def) =>
+            config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
+
+        var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
+        var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
+
+        _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId    = userId,
+            EventType = AuditEventType.MfaLoginVerified,
+            IpAddress = ipAddress,
+            UserAgent = userAgent,
+            Details   = JsonSerializer.Serialize(new { method = "totp", session_id = session.Id })
+        }));
+
+        return new LoginResponse
+        {
+            AccessToken        = accessToken,
+            RefreshToken       = refreshTokenPlain,
+            ExpiresIn          = Cfg("jwt_access_expiry_minutes", 60) * 60,
+            IdleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30),
+            User               = new UserProfileDto
+            {
+                UserId    = user.Id,
+                Email     = user.Email,
+                FullName  = user.FullName,
+                CompanyId = user.CompanyId.ToString()
+            }
+        };
+    }
+
+    // ── Email OTP Login ──────────────────────────────────────────────────────
+
+    public async Task<MfaChallenge> SendEmailOtpAsync(Guid userId, string? ipAddress)
+    {
+        var user = await _users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        var (expiryMinutes, otpLength) = await GetEmailOtpConfigAsync();
+
+        await _challenges.InvalidateActiveByTypeAsync(userId, "email_otp");
 
         var otp = GenerateOtp(otpLength);
         var challenge = await _challenges.CreateAsync(new MfaChallenge
         {
-            UserId      = userId,
-            PhoneNumber = phoneNumber,
-            OtpHash     = _jwt.HashToken(otp),
-            ExpiresAt   = DateTime.UtcNow.AddMinutes(expiryMinutes)
-        });
-
-        await _users.UpdatePhoneNumberAsync(userId, phoneNumber);
-
-        try
-        {
-            await _sms.SendAsync(phoneNumber, $"Your FlatPlanet verification code is: {otp}");
-        }
-        catch (Exception ex)
-        {
-            _logger.LogError(ex, "SMS send failed for user {UserId}", userId);
-            throw new ServiceUnavailableException("SMS service is temporarily unavailable. Please try again.");
-        }
-
-        await _auditLog.LogAsync(new AuthAuditLog
-        {
-            UserId    = userId,
-            EventType = AuditEventType.MfaOtpIssued,
-            Details   = JsonSerializer.Serialize(new { masked = MaskPhone(phoneNumber) })
-        });
-
-        return new EnrollPhoneResponse { MaskedPhone = MaskPhone(phoneNumber), ExpiresAt = challenge.ExpiresAt };
-    }
-
-    public async Task VerifyOtpAsync(Guid userId, string code)
-    {
-        var maxAttempts = await GetMaxAttemptsAsync();
-        var challenge   = await _challenges.GetActiveByUserIdAsync(userId)
-            ?? throw new KeyNotFoundException("No active MFA challenge found.");
-
-        if (challenge.ExpiresAt < DateTime.UtcNow)
-            throw new ArgumentException("OTP has expired.");
-
-        if (challenge.Attempts >= maxAttempts)
-            throw new TooManyRequestsException("Maximum OTP attempts exceeded.");
-
-        if (_jwt.HashToken(code) != challenge.OtpHash)
-        {
-            await _challenges.IncrementAttemptsAsync(challenge.Id);
-            await _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaFailed });
-            throw new ArgumentException("Invalid OTP.");
-        }
-
-        await _challenges.MarkVerifiedAsync(challenge.Id);
-        await _users.UpdateMfaEnabledAsync(userId, true);
-
-        await _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaVerified });
-        await _identityVerification.SyncStatusAsync(userId);
-    }
-
-    public async Task<MfaChallenge> SendLoginOtpAsync(Guid userId, string phoneNumber)
-    {
-        var (expiryMinutes, otpLength) = await GetOtpConfigAsync();
-
-        await _challenges.InvalidateActiveAsync(userId);
-
-        var otp = GenerateOtp(otpLength);
-        var challenge = await _challenges.CreateAsync(new MfaChallenge
-        {
-            UserId      = userId,
-            PhoneNumber = phoneNumber,
-            OtpHash     = _jwt.HashToken(otp),
-            ExpiresAt   = DateTime.UtcNow.AddMinutes(expiryMinutes)
+            UserId        = userId,
+            ChallengeType = "email_otp",
+            Email         = user.Email,
+            OtpHash       = _jwt.HashToken(otp),
+            ExpiresAt     = DateTime.UtcNow.AddMinutes(expiryMinutes)
         });
 
         try
         {
-            await _sms.SendAsync(phoneNumber, $"Your FlatPlanet login code is: {otp}");
+            await _email.SendMfaOtpEmailAsync(user.Email, otp, expiryMinutes);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "SMS send failed for login OTP user {UserId}", userId);
-            throw new ServiceUnavailableException("SMS service is temporarily unavailable. Please try again.");
+            _logger.LogError(ex, "Email OTP send failed for user {UserId}", userId);
+            throw new ServiceUnavailableException("Email service is temporarily unavailable. Please try again.");
         }
 
-        await _auditLog.LogAsync(new AuthAuditLog
+        _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog
         {
             UserId    = userId,
             EventType = AuditEventType.MfaOtpIssued,
-            Details   = JsonSerializer.Serialize(new { type = "login", masked = MaskPhone(phoneNumber) })
-        });
+            IpAddress = ipAddress,
+            Details   = JsonSerializer.Serialize(new { type = "email_otp" })
+        }));
 
         return challenge;
     }
 
-    public async Task<LoginResponse> VerifyLoginOtpAsync(Guid challengeId, string code, string? ipAddress, string? userAgent)
+    public async Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent)
     {
-        var maxAttempts = await GetMaxAttemptsAsync();
-        var challenge   = await _challenges.GetByIdAsync(challengeId)
+        var challenge = await _challenges.GetByIdAsync(challengeId)
             ?? throw new KeyNotFoundException("MFA challenge not found.");
 
-        if (challenge.ExpiresAt < DateTime.UtcNow)
+        if (challenge.ChallengeType != "email_otp")
+            throw new ArgumentException("Invalid challenge type.");
+
+        if (challenge.VerifiedAt is not null)
+            throw new InvalidOperationException("Challenge has already been used.");
+
+        if (challenge.ExpiresAt <= DateTime.UtcNow)
             throw new ArgumentException("OTP has expired.");
 
+        var maxAttempts = await GetMaxAttemptsAsync();
         if (challenge.Attempts >= maxAttempts)
             throw new TooManyRequestsException("Maximum OTP attempts exceeded.");
 
-        if (_jwt.HashToken(code) != challenge.OtpHash)
+        if (_jwt.HashToken(otpCode) != challenge.OtpHash)
         {
             await _challenges.IncrementAttemptsAsync(challenge.Id);
-            await _auditLog.LogAsync(new AuthAuditLog { UserId = challenge.UserId, EventType = AuditEventType.MfaFailed });
-            throw new ArgumentException("Invalid OTP.");
+            _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog { UserId = challenge.UserId, EventType = AuditEventType.MfaFailed, IpAddress = ipAddress }));
+            throw new UnauthorizedAccessException("Invalid OTP.");
         }
 
         await _challenges.MarkVerifiedAsync(challenge.Id);
@@ -184,26 +259,68 @@ public class MfaService : IMfaService
         var user = await _users.GetByIdAsync(challenge.UserId)
             ?? throw new KeyNotFoundException("User not found.");
 
+        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
+
+        int Cfg(string key, int def) =>
+            config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
+
+        var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
+        var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
+
+        // ISO 27001: email OTP does NOT set mfa_verified — only TOTP enrolment does
+        _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId    = user.Id,
+            EventType = AuditEventType.MfaLoginVerified,
+            IpAddress = ipAddress,
+            UserAgent = userAgent,
+            Details   = JsonSerializer.Serialize(new { method = "email_otp", session_id = session.Id })
+        }));
+
+        return new LoginResponse
+        {
+            AccessToken        = accessToken,
+            RefreshToken       = refreshTokenPlain,
+            ExpiresIn          = Cfg("jwt_access_expiry_minutes", 60) * 60,
+            IdleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30),
+            User               = new UserProfileDto
+            {
+                UserId    = user.Id,
+                Email     = user.Email,
+                FullName  = user.FullName,
+                CompanyId = user.CompanyId.ToString()
+            }
+        };
+    }
+
+    // ── Admin ────────────────────────────────────────────────────────────────
+
+    public async Task DisableMfaAsync(Guid userId)
+    {
+        await _users.ResetMfaColumnsAsync(userId);
+        _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaDisabled }));
+    }
+
+    public async Task ResetMfaAsync(Guid userId)
+    {
+        await _users.ResetMfaColumnsAsync(userId);
+        _ = Task.Run(() => _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaReset }));
+    }
+
+    // ── Shared session factory ───────────────────────────────────────────────
+
+    private async Task<(Session session, string refreshTokenPlain, Dictionary<string, string> config)> CreateSessionInTransactionAsync(
+        Guid userId, string? ipAddress, string? userAgent)
+    {
         var config = (await _securityConfig.GetAllAsync()).ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
         int Cfg(string key, int def) =>
             config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
-        var now                = DateTime.UtcNow;
-        var absoluteTimeout    = Cfg("session_absolute_timeout_minutes", 480);
-        var idleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30);
-        var refreshExpiryDays  = Cfg("jwt_refresh_expiry_days", 7);
-        var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
-        var maxSessions        = Cfg("max_concurrent_sessions", 3);
-
-        // Enforce the same concurrent-session cap that AuthService applies on non-MFA login.
-        // Without this, MFA users could accumulate unlimited sessions.
-        var activeSessions = await _sessions.CountActiveByUserAsync(user.Id);
-        if (activeSessions >= maxSessions)
-        {
-            var oldest = await _sessions.GetOldestActiveByUserAsync(user.Id);
-            if (oldest is not null)
-                await _sessions.EndSessionAsync(oldest.Id, "replaced");
-        }
+        var now              = DateTime.UtcNow;
+        var maxSessions      = Cfg("max_concurrent_sessions", 3);
+        var absoluteTimeout  = Cfg("session_absolute_timeout_minutes", 480);
+        var idleTimeout      = Cfg("session_idle_timeout_minutes", 30);
+        var refreshExpiryDays = Cfg("jwt_refresh_expiry_days", 7);
 
         Session session;
         string refreshTokenPlain;
@@ -213,13 +330,15 @@ public class MfaService : IMfaService
         {
             try
             {
+                await _sessions.EvictOldestIfOverLimitAsync(userId, maxSessions, conn, tx);
+
                 session = await _sessions.CreateAsync(new Session
                 {
-                    UserId             = user.Id,
+                    UserId             = userId,
                     IpAddress          = ipAddress,
                     UserAgent          = userAgent,
                     ExpiresAt          = now.AddMinutes(absoluteTimeout),
-                    IdleTimeoutMinutes = idleTimeoutMinutes
+                    IdleTimeoutMinutes = idleTimeout
                 }, conn, tx);
 
                 var (plain, hash) = _jwt.GenerateRefreshToken();
@@ -227,7 +346,7 @@ public class MfaService : IMfaService
 
                 await _refreshTokens.CreateAsync(new RefreshToken
                 {
-                    UserId    = user.Id,
+                    UserId    = userId,
                     SessionId = session.Id,
                     TokenHash = hash,
                     ExpiresAt = now.AddDays(refreshExpiryDays)
@@ -242,64 +361,42 @@ public class MfaService : IMfaService
             }
         }
 
-        var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
-        var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
-
-        await _auditLog.LogAsync(new AuthAuditLog
-        {
-            UserId    = user.Id,
-            EventType = AuditEventType.MfaLoginVerified,
-            IpAddress = ipAddress,
-            UserAgent = userAgent,
-            Details   = JsonSerializer.Serialize(new { session_id = session.Id })
-        });
-
-        return new LoginResponse
-        {
-            AccessToken        = accessToken,
-            RefreshToken       = refreshTokenPlain,
-            ExpiresIn          = accessExpiryMinutes * 60,
-            IdleTimeoutMinutes = idleTimeoutMinutes,
-            User               = new UserProfileDto
-            {
-                UserId    = user.Id,
-                Email     = user.Email,
-                FullName  = user.FullName,
-                CompanyId = user.CompanyId.ToString()
-            }
-        };
+        return (session, refreshTokenPlain, config);
     }
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private async Task<(int expiryMinutes, int otpLength)> GetOtpConfigAsync()
+    private async Task<(int expiryMinutes, int otpLength)> GetEmailOtpConfigAsync()
     {
-        return await _cache.GetOrCreateAsync("mfa_otp_config", async entry =>
+        return await _cache.GetOrCreateAsync("mfa_email_otp_config", async entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
             var raw = (await _securityConfig.GetAllAsync()).ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
             int Cfg(string key, int def) =>
                 raw.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
-            return (Cfg("mfa_otp_expiry_minutes", 10), Cfg("mfa_otp_length", 6));
+            return (Cfg("mfa_email_otp_expiry_minutes", 10), Cfg("mfa_otp_length", 6));
         });
     }
 
     private async Task<int> GetMaxAttemptsAsync()
     {
-        return await _cache.GetOrCreateAsync("mfa_otp_max_attempts", async entry =>
+        return await _cache.GetOrCreateAsync("mfa_max_otp_attempts", async entry =>
         {
             entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
-            var raw = await _securityConfig.GetValueAsync("mfa_otp_max_attempts");
-            return int.TryParse(raw, out var n) ? n : 3;
+            var raw = await _securityConfig.GetValueAsync("mfa_max_otp_attempts");
+            return int.TryParse(raw, out var n) ? n : 5;
         });
+    }
+
+    private async Task<string> GetTotpIssuerAsync()
+    {
+        return await _cache.GetOrCreateAsync("mfa_totp_issuer", async entry =>
+        {
+            entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5);
+            return await _securityConfig.GetValueAsync("mfa_totp_issuer") ?? "FlatPlanet";
+        }) ?? "FlatPlanet";
     }
 
     private static string GenerateOtp(int length) =>
         string.Join("", RandomNumberGenerator.GetBytes(length).Select(b => (b % 10).ToString()));
-
-    private static string MaskPhone(string phone)
-    {
-        if (phone.Length <= 7) return "*****";
-        return phone[..3] + "*****" + phone[^4..];
-    }
 }

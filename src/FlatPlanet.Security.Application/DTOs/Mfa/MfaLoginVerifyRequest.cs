@@ -9,5 +9,5 @@ public class MfaLoginVerifyRequest
 
     [Required]
     [StringLength(8, MinimumLength = 4)]
-    public string Code { get; set; } = string.Empty;
+    public string OtpCode { get; set; } = string.Empty;
 }

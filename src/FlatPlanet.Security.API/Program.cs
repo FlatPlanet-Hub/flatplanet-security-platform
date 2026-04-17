@@ -12,7 +12,6 @@ using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
 using FlatPlanet.Security.Infrastructure.BackgroundServices;
 using FlatPlanet.Security.Infrastructure.Email;
-using FlatPlanet.Security.Infrastructure.ExternalServices;
 using FlatPlanet.Security.Infrastructure.Persistence;
 using FlatPlanet.Security.Infrastructure.Repositories;
 using FlatPlanet.Security.Infrastructure.Security;
@@ -35,7 +34,7 @@ builder.Services.Configure<JwtOptions>(builder.Configuration.GetSection(JwtOptio
 builder.Services.Configure<ServiceTokenOptions>(builder.Configuration.GetSection(ServiceTokenOptions.Section));
 builder.Services.Configure<AppOptions>(builder.Configuration.GetSection(AppOptions.Section));
 builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection(SmtpOptions.Section));
-builder.Services.Configure<SmsOptions>(builder.Configuration.GetSection(SmsOptions.Section));
+builder.Services.Configure<MfaOptions>(builder.Configuration.GetSection(MfaOptions.Section));
 
 // Database
 builder.Services.AddSingleton<IDbConnectionFactory>(
@@ -157,6 +156,16 @@ builder.Services.AddRateLimiter(options =>
                 PermitLimit = 60,
                 Window = TimeSpan.FromMinutes(1)
             }));
+
+    // mfa-verify: 5 per min per IP (TOTP and email OTP login/enrol verify endpoints)
+    options.AddPolicy("mfa-verify", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 5,
+                Window = TimeSpan.FromMinutes(1)
+            }));
 });
 
 builder.Services.AddHealthChecks();
@@ -202,7 +211,7 @@ builder.Services.AddScoped<ISecurityConfigService, SecurityConfigService>();
 builder.Services.AddScoped<IAccessReviewService, AccessReviewService>();
 builder.Services.AddScoped<IBusinessMembershipService, BusinessMembershipService>();
 builder.Services.AddScoped<IEmailService, SmtpEmailService>();
-builder.Services.AddScoped<ISmsSender, ConsoleSmsSender>(); // Swap to TwilioSmsSender once Sms credentials are configured
+builder.Services.AddSingleton<ITotpSecretEncryptor, TotpSecretEncryptor>();
 builder.Services.AddScoped<IMfaService, MfaService>();
 builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationService>();
 builder.Services.AddHostedService<AuditLogCleanupService>();

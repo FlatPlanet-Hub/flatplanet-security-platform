@@ -171,19 +171,35 @@ public class UserRepository : IUserRepository
             transaction: tx);
     }
 
-    public async Task UpdatePhoneNumberAsync(Guid userId, string phoneNumber)
-    {
-        using var conn = await _db.CreateConnectionAsync();
-        await conn.ExecuteAsync(
-            "UPDATE users SET phone_number = @PhoneNumber WHERE id = @Id",
-            new { PhoneNumber = phoneNumber, Id = userId });
-    }
-
     public async Task UpdateMfaEnabledAsync(Guid userId, bool enabled)
     {
         using var conn = await _db.CreateConnectionAsync();
         await conn.ExecuteAsync(
             "UPDATE users SET mfa_enabled = @Enabled WHERE id = @Id",
             new { Enabled = enabled, Id = userId });
+    }
+
+    public async Task UpdateMfaTotpSecretAsync(Guid userId, string encryptedSecret)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET mfa_totp_secret = @EncryptedSecret WHERE id = @Id",
+            new { EncryptedSecret = encryptedSecret, Id = userId });
+    }
+
+    public async Task SetMfaTotpEnrolledAsync(Guid userId, bool enrolled)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET mfa_totp_enrolled = @Enrolled, mfa_enabled = @Enrolled, mfa_method = CASE WHEN @Enrolled THEN 'totp' ELSE mfa_method END WHERE id = @Id",
+            new { Enrolled = enrolled, Id = userId });
+    }
+
+    public async Task ResetMfaColumnsAsync(Guid userId)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET mfa_enabled = false, mfa_method = null, mfa_totp_secret = null, mfa_totp_enrolled = false WHERE id = @Id",
+            new { Id = userId });
     }
 }

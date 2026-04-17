@@ -16,8 +16,8 @@ public class MfaChallengeRepository : IMfaChallengeRepository
         using var conn = await _db.CreateConnectionAsync();
         var id = await conn.QuerySingleAsync<Guid>(
             """
-            INSERT INTO mfa_challenges (user_id, phone_number, otp_hash, expires_at)
-            VALUES (@UserId, @PhoneNumber, @OtpHash, @ExpiresAt)
+            INSERT INTO mfa_challenges (user_id, challenge_type, email, otp_hash, expires_at)
+            VALUES (@UserId, @ChallengeType, @Email, @OtpHash, @ExpiresAt)
             RETURNING id
             """,
             challenge);
@@ -25,16 +25,17 @@ public class MfaChallengeRepository : IMfaChallengeRepository
         return challenge;
     }
 
-    public async Task<MfaChallenge?> GetActiveByUserIdAsync(Guid userId)
+    public async Task<MfaChallenge?> GetActiveByUserIdAndTypeAsync(Guid userId, string challengeType)
     {
         using var conn = await _db.CreateConnectionAsync();
         return await conn.QuerySingleOrDefaultAsync<MfaChallenge>(
             """
             SELECT * FROM mfa_challenges
-            WHERE user_id = @UserId AND verified_at IS NULL AND expires_at > now()
+            WHERE user_id = @UserId AND challenge_type = @ChallengeType
+              AND verified_at IS NULL AND expires_at > now()
             ORDER BY created_at DESC LIMIT 1
             """,
-            new { UserId = userId });
+            new { UserId = userId, ChallengeType = challengeType });
     }
 
     public async Task<MfaChallenge?> GetByIdAsync(Guid id)
@@ -61,23 +62,16 @@ public class MfaChallengeRepository : IMfaChallengeRepository
             new { Id = id });
     }
 
-    public async Task InvalidateActiveAsync(Guid userId)
+    public async Task InvalidateActiveByTypeAsync(Guid userId, string challengeType)
     {
         using var conn = await _db.CreateConnectionAsync();
         await conn.ExecuteAsync(
             """
             UPDATE mfa_challenges SET expires_at = now()
-            WHERE user_id = @UserId AND verified_at IS NULL AND expires_at > now()
+            WHERE user_id = @UserId AND challenge_type = @ChallengeType
+              AND verified_at IS NULL AND expires_at > now()
             """,
-            new { UserId = userId });
-    }
-
-    public async Task<bool> HasVerifiedChallengeAsync(Guid userId)
-    {
-        using var conn = await _db.CreateConnectionAsync();
-        return await conn.QuerySingleAsync<bool>(
-            "SELECT EXISTS(SELECT 1 FROM mfa_challenges WHERE user_id = @UserId AND verified_at IS NOT NULL)",
-            new { UserId = userId });
+            new { UserId = userId, ChallengeType = challengeType });
     }
 
     public async Task DeleteExpiredAsync()

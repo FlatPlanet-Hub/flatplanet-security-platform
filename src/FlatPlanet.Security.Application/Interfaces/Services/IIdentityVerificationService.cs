@@ -4,6 +4,6 @@ namespace FlatPlanet.Security.Application.Interfaces.Services;
 
 public interface IIdentityVerificationService
 {
-    Task SyncStatusAsync(Guid userId);
+    Task SyncStatusAsync(Guid userId, bool mfaTotpEnrolled);
     Task<IdentityVerificationStatusDto> GetStatusAsync(Guid userId);
 }
