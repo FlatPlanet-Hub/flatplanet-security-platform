@@ -29,4 +29,10 @@ public interface IUserRepository
     Task CompleteTotpEnrolmentAsync(Guid userId, long lastUsedStep);
     /// <summary>Returns false if the user was not found.</summary>
     Task<bool> ResetMfaColumnsAsync(Guid userId);
+    /// <summary>
+    /// Sets mfa_enabled=true and mfa_method to the given value. Always clears TOTP columns
+    /// (enrolled, secret, last_used_step) so any switch in method forces fresh enrolment.
+    /// Returns false if the user was not found.
+    /// </summary>
+    Task<bool> SetMfaMethodAsync(Guid userId, string method);
 }

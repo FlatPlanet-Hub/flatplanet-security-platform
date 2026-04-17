@@ -1,8 +1,8 @@
 # FlatPlanet — Frontend Integration Guide
 
 **Audience:** Frontend developers
-**Last updated:** 2026-04-13
-**Verified against:** Security Platform v1.4.0 · Platform API (HubApi) v1.0.1
+**Last updated:** 2026-04-17
+**Verified against:** Security Platform v1.6.0 · Platform API (HubApi) v1.0.1
 **Tested by:** Integration tester (Claude Code)
 
 ---
@@ -10,6 +10,20 @@
 ## What's New in This Version
 
 > These are verified changes from integration testing — update your frontend accordingly.
+
+### Security Platform v1.6.0 (2026-04-17)
+
+| # | Change | Impact |
+|---|---|---|
+| 1 | Login response now includes `requiresMfa`, `challengeId`, `idleTimeoutMinutes` | Handle MFA challenge branch at login — if `requiresMfa: true`, call `/mfa/otp/login-verify` before using tokens |
+| 2 | `POST /api/v1/mfa/enroll` — phone enroll + SMS OTP | New MFA enrollment flow; call during account setup or from settings page |
+| 3 | `POST /api/v1/mfa/otp/verify` — complete enrollment | Verifies OTP after enroll; enables MFA on account |
+| 4 | `POST /api/v1/mfa/otp/login-verify` — complete MFA-gated login | New step required when `requiresMfa: true` is returned at login |
+| 5 | `GET /api/v1/identity/verification/status` — user's own verification status | Use to gate features requiring identity verification |
+| 6 | `POST /api/v1/auth/change-password` now rate limited: 5 req / 15 min per user | Show appropriate message on `429` |
+| 7 | `POST /api/v1/auth/forgot-password` now rate limited: 3 req / 15 min per IP | Show appropriate message on `429` |
+| 8 | `POST /api/v1/authorize` now returns `roles` and `permissions` alongside `allowed` | Already documented in guide — no change needed if you're only reading `allowed` |
+| 9 | New `503` error code from SMS endpoints | Handle gracefully — show retry message |
 
 ### Security Platform v1.4.0 (2026-04-13)
 
@@ -65,16 +79,20 @@ The frontend only logs in through the Security Platform. The JWT it issues is us
 
 ---
 
-## Auth Flow (unchanged)
+## Auth Flow
 
 ```
-1.  POST  /api/v1/auth/login                              → get accessToken + refreshToken
+1.  POST  /api/v1/auth/login
+      ├─ requiresMfa: false → proceed to step 2
+      └─ requiresMfa: true  → POST /api/v1/mfa/otp/login-verify (with challengeId + code)
+                                └─ 200 → tokens issued, proceed to step 2
 2.  GET   /api/v1/auth/me                                 → get user profile + roles
 3.  GET   /api/projects                                   → list user's projects           (HubApi)
 4.  GET   /api/projects/{id}                              → get single project             (HubApi)
 5.  GET   /api/projects/{id}/claude-config/workspace      → download CLAUDE-local.md       (HubApi)
 6.  POST  /api/v1/auth/refresh                            → rotate tokens before expiry
-7.  POST  /api/v1/auth/logout                             → end session, clear tokens
+7.  POST  /api/v1/auth/heartbeat                          → keep session alive (every idleTimeoutMinutes × 0.5 min)
+8.  POST  /api/v1/auth/logout                             → end session, clear tokens
 ```
 
 Attach to every request:
@@ -100,14 +118,17 @@ Content-Type: application/json
 
 `appSlug` is optional. Pass `"dashboard-hub"` to get app-scoped permissions included in `/auth/me`.
 
-**Response:**
+**Response — no MFA enrolled:**
 ```json
 {
   "success": true,
   "data": {
+    "requiresMfa": false,
+    "challengeId": null,
     "accessToken": "eyJhbGci...",
     "refreshToken": "TUmzgLj...",
     "expiresIn": 3600,
+    "idleTimeoutMinutes": 30,
     "user": {
       "userId": "dc88786a-0b38-43bb-8dc3-7ec36f050ec9",
       "email": "chris.moriarty@flatplanet.com",
@@ -118,6 +139,26 @@ Content-Type: application/json
 }
 ```
 
+**Response — MFA required (`requiresMfa: true`):**
+```json
+{
+  "success": true,
+  "data": {
+    "requiresMfa": true,
+    "challengeId": "b3d4e5f6-0000-0000-0000-000000000001",
+    "accessToken": "",
+    "refreshToken": "",
+    "expiresIn": 0,
+    "idleTimeoutMinutes": 0,
+    "user": { ... }
+  }
+}
+```
+
+When `requiresMfa` is `true`: no tokens are issued yet. Show an OTP input, then call `POST /api/v1/mfa/otp/login-verify` with the `challengeId` and the code the user receives by SMS. See Step 1b below.
+
+**`idleTimeoutMinutes`** — use this value to schedule your heartbeat interval: fire `POST /api/v1/auth/heartbeat` every `idleTimeoutMinutes × 0.5` minutes to keep the session alive. Default is `30` minutes, so send a heartbeat every 15 minutes.
+
 **Error cases:**
 
 | HTTP | Meaning |
@@ -127,6 +168,103 @@ Content-Type: application/json
 | `403` | Account or company is suspended |
 | `423` | Account temporarily locked |
 | `429` | Rate limited |
+
+---
+
+## Step 1b — MFA Login Verify (only when `requiresMfa: true`)
+
+**Endpoint:** `POST /api/v1/mfa/otp/login-verify` on the Security Platform
+
+**Auth required:** No
+
+Show an OTP input screen after the login response returns `requiresMfa: true`. The user receives a code by SMS.
+
+**Request:**
+```json
+{
+  "challengeId": "b3d4e5f6-0000-0000-0000-000000000001",
+  "code": "483921"
+}
+```
+
+`challengeId` comes from the login response. `code` is what the user types in.
+
+**Response `200`:** Same shape as a standard login response — `requiresMfa: false`, tokens populated. Store and use normally.
+
+**Error cases:**
+
+| HTTP | Message | Action |
+|---|---|---|
+| `422` | Invalid or expired OTP. | Show inline error — let user retry. After too many attempts the challenge expires. |
+| `400` | *(validation message)* | Missing field |
+
+**Frontend notes:**
+- The challenge expires after 5 minutes. If the user takes too long, show "Code expired — please log in again" and redirect to login.
+- Do not expose a "resend code" option — have the user restart login to get a fresh challenge.
+
+---
+
+## Step 1c — MFA Enrollment (account settings)
+
+Allows a user to enroll their phone number for MFA. Two calls: enroll (sends SMS) → verify (confirms code).
+
+**Step 1 — Send OTP**
+
+`POST /api/v1/mfa/enroll` — Auth required
+
+**Request:**
+```json
+{
+  "phoneNumber": "+639171234567"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "maskedPhone": "+63917***4567",
+    "expiresAt": "2026-04-17T10:15:00Z"
+  }
+}
+```
+
+Show the masked phone and a code input. The OTP expires at `expiresAt`.
+
+**Error cases:**
+
+| HTTP | Message | Action |
+|---|---|---|
+| `400` | *(validation message)* | Invalid phone format |
+| `503` | SMS service is temporarily unavailable. Please try again. | Show retry message — SMS provider is down |
+
+**Step 2 — Verify OTP**
+
+`POST /api/v1/mfa/otp/verify` — Auth required
+
+**Request:**
+```json
+{
+  "code": "483921"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "MFA enrollment verified. MFA is now enabled on your account." }
+}
+```
+
+MFA is now active. The user will be asked for a code on their next login.
+
+**Error cases:**
+
+| HTTP | Message | Action |
+|---|---|---|
+| `422` | Invalid or expired OTP. | Show inline error — let user retry |
 
 ---
 
@@ -640,6 +778,7 @@ Revokes all refresh tokens and ends the session. Clear both tokens and redirect 
 | `400` | Passwords do not match. | Show inline error on confirm-password field |
 | `400` | *(policy message)* | Show password requirements hint |
 | `401` | — | Session expired — redirect to login |
+| `429` | — | Rate limited (5 per 15 min per user) — show "Too many attempts, please try again later" |
 
 **Frontend implementation notes:**
 
@@ -672,6 +811,7 @@ Revokes all refresh tokens and ends the session. Clear both tokens and redirect 
 | HTTP | Message | Action |
 |---|---|---|
 | `400` | *(validation message)* | Missing or invalid email format |
+| `429` | — | Rate limited (3 per 15 min per IP) — show "Too many attempts, please try again later" |
 
 **Frontend implementation notes:**
 
@@ -718,6 +858,53 @@ The user lands on your `/reset-password?token=...` page from the email link. Rea
 - On `200`, redirect to the login page with a success banner: "Password reset successfully. Please log in."
 - On `400` with "invalid or expired", redirect to the forgot-password page so the user can request a fresh link. The used or expired token cannot be retried.
 - The token is extracted from the URL as-is — do not decode or transform it before sending.
+
+---
+
+## Step 11 — Heartbeat (keep session alive)
+
+**Endpoint:** `POST /api/v1/auth/heartbeat` on the Security Platform
+
+**Auth required:** Yes
+
+Fire this on an interval of `idleTimeoutMinutes × 0.5` minutes (returned at login). With the default `idleTimeoutMinutes: 30`, send a heartbeat every **15 minutes**.
+
+**Response `200`:**
+```json
+{ "success": true, "data": { "sessionActive": true } }
+```
+
+**On `401`:** Session has expired. Stop the interval, clear tokens, redirect to login. Do not attempt a token refresh — the session is already gone.
+
+---
+
+## Step 12 — Identity Verification Status
+
+**Endpoint:** `GET /api/v1/identity/verification/status` on the Security Platform
+
+**Auth required:** Yes
+
+Use this to gate features that require identity verification (e.g. certain financial operations or sensitive data access).
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "otpVerified": true,
+    "videoVerified": false,
+    "fullyVerified": true,
+    "verifiedAt": "2026-04-17T10:20:00Z"
+  }
+}
+```
+
+| Field | Notes |
+|---|---|
+| `otpVerified` | User completed MFA enrollment (OTP verified). |
+| `videoVerified` | Video verification complete. Always `false` — not yet implemented. |
+| `fullyVerified` | The value to gate on. Recomputed server-side from current config on every call. |
+| `verifiedAt` | When the user first reached `fullyVerified: true`. `null` if not yet verified. |
 
 ---
 

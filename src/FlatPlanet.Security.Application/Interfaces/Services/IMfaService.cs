@@ -15,6 +15,7 @@ public interface IMfaService
 
     // Email OTP login (backup factor)
     Task<MfaChallenge> SendEmailOtpAsync(Guid userId, string? ipAddress);
+    Task<MfaChallenge> ResendEmailOtpAsync(Guid userId, string? ipAddress);
     Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent);
 
     // Backup codes (TOTP recovery)
@@ -27,4 +28,5 @@ public interface IMfaService
     // Admin
     Task DisableMfaAsync(Guid userId);
     Task ResetMfaAsync(Guid userId);
+    Task SetMfaMethodAsync(Guid userId, string method, Guid performedByUserId);
 }

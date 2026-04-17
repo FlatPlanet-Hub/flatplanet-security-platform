@@ -1,7 +1,7 @@
 # FlatPlanet Security Platform — Implementation Plan
-**Branch:** `feature/feat-mfa-changes`  
+**Branch:** `feature/feat-mfa-changes-clean`  
 **Authors:** Lightning (plan), Cloud (execution), reviewed by user before any commit  
-**Last updated:** 2026-04-16
+**Last updated:** 2026-04-17
 
 ---
 
@@ -416,39 +416,94 @@ User: Tier 3 sign-off before any commit is made.
 
 Only begins after Phase 1 is committed and approved.
 
+> **Gap analysis reviewed by Lightning — eight passes (2026-04-17). 38 gaps corrected.**
+> G1: Insecure OTP generation. G2: Identity verification sync. G3: InvalidateActive type-scoped.
+> G4: MFA routes /v1. G5: Rate limit on TOTP verify. G6: V23 resets SMS users first.
+> G7: DTO cleanup. G8: UpdatePhoneNumberAsync named. NEW1: IIdentityVerificationService in constructor.
+> NEW2: UserId in TOTP/email OTP challenge responses. NEW3: Build batch note (2.2–2.12). NEW4: Admin routes /v1.
+> T1: Build note contradiction removed. T2: ResetMfaColumnsAsync atomic method. T3: Email send awaited (not fire-and-forget).
+> T4: Session cap inside transaction for all three MFA login methods. T5: BeginTotpEnrolmentAsync returns DTO. T6: Test cases added.
+> U1: MfaEnrolmentPending gate scoped to MfaMethod=="totp" only — email_otp users were permanently blocked.
+> U2: UserMfaStatusResponse DTO defined for AdminMfaController GET /status.
+> U3: Test case added — VerifyTotpEnrolmentAsync calls SyncStatusAsync after valid code.
+> U4: OTP hash method unified to _jwt.HashToken() for both store and verify — raw SHA-256 removed.
+> U5: VerifyLoginTotpAsync explicit null guards for user and MfaTotpSecret.
+> U6: Config key rename annotated — old mfa_otp_max_attempts vs new mfa_max_otp_attempts.
+> Dead method: EnableMfaAsync removed from IMfaService (no endpoint, no caller).
+> V1: GetActiveByUserIdAsync removed from IMfaChallengeRepository (dead after Phase 2).
+> V2: Base32Encoding.ToString(secret) — NOT Base32.Encode() — OtpNet compile error fix.
+> V3: SendEmailOtpAsync explicit null guard for user not found.
+> V4: AdminMfaController POST endpoints return 204 No Content.
+> V5: AuthServiceTests MfaEnrolmentPending test requires MfaMethod="totp"; added null-method edge case.
+> V6: DisableMfaAsync and ResetMfaAsync test cases added.
+> W1: InvalidateActiveAsync removed from IMfaChallengeRepository (dead code after Phase 2).
+> W2: DisableMfaAsync/ResetMfaAsync step bodies now reference ResetMfaColumnsAsync explicitly.
+> W3: VerifyLoginEmailOtpAsync step 2 guard failures have explicit exception types.
+> W4: VerifyLoginTotpAsync success path and invalid code tests added.
+> X1: V23 reset condition broadened to WHERE mfa_enabled=true — original phone_verified/mfa_method='sms' condition matched zero real Phase 1 users.
+> X2: Test added for VerifyLoginEmailOtpAsync wrong challenge_type guard (W3 verification).
+> Y1: All three session-creating methods now explicitly call GetPlatformRoleNamesForUserAsync + IssueAccessTokenAsync before returning LoginResponse.
+
 ---
 
-## Step 2.1 — DB Migrations V22 and V23
+## Step 2.1 — DB Migration V23
 
-**Note:** V22 is used by Step 1.5 (`remove_token_plain`). Phase 2 migration is V23.  
-If Step 1.5's migration hasn't been created yet when Phase 2 starts, Cloud assigns numbers sequentially from the highest existing file.
+**Note:** V22 (`remove_token_plain`) is done. Phase 2 migration is V23.
 
 **File:** `db/V23__mfa_totp_and_challenge_type.sql`
 
 ```sql
--- Users: add TOTP columns, drop phone columns
+-- GAP G6 FIX (X1 refined): Reset ALL mfa_enabled users before dropping phone columns.
+-- Phase 1 VerifyOtpAsync sets mfa_enabled=true but never sets phone_verified=true or mfa_method='sms'.
+-- Real Phase 1 SMS users have: mfa_enabled=true, phone_verified=false, mfa_method=null.
+-- The original condition (phone_verified=true OR mfa_method='sms') resets zero real users.
+-- Safe to reset ALL mfa_enabled users here: at V23 deploy time, no user has TOTP (feature didn't exist).
+UPDATE users
+SET mfa_enabled = false, mfa_method = null
+WHERE mfa_enabled = true;
+
+-- Users: add TOTP columns, drop SMS columns
 ALTER TABLE users
-  ADD COLUMN IF NOT EXISTS mfa_totp_secret TEXT,
+  ADD COLUMN IF NOT EXISTS mfa_totp_secret   TEXT,
   ADD COLUMN IF NOT EXISTS mfa_totp_enrolled BOOLEAN NOT NULL DEFAULT false,
   DROP COLUMN IF EXISTS phone_number,
   DROP COLUMN IF EXISTS phone_verified;
 
 -- mfa_challenges: add challenge_type, drop phone_number
+-- phone_number was NOT NULL in V8 — the ADD must come first so existing rows get a default
 ALTER TABLE mfa_challenges
-  ADD COLUMN IF NOT EXISTS challenge_type TEXT NOT NULL DEFAULT 'email_otp',
-  DROP COLUMN IF EXISTS phone_number;
+  ADD COLUMN IF NOT EXISTS challenge_type TEXT NOT NULL DEFAULT 'email_otp';
 
--- Backfill existing challenge rows
+-- Backfill any existing rows that might have null (defensive)
 UPDATE mfa_challenges SET challenge_type = 'email_otp' WHERE challenge_type IS NULL;
 
--- seed new config keys
-INSERT INTO security_config (config_key, config_value) VALUES
-  ('mfa_email_otp_expiry_minutes', '10'),
-  ('mfa_totp_issuer', 'FlatPlanet'),
-  ('mfa_max_otp_attempts', '5'),
-  ('mfa_enrolment_grace_period_minutes', '15')
+ALTER TABLE mfa_challenges
+  DROP COLUMN IF EXISTS phone_number;
+
+-- Add index for type-scoped queries
+CREATE INDEX IF NOT EXISTS idx_mfa_challenges_type
+  ON mfa_challenges(user_id, challenge_type, verified_at)
+  WHERE verified_at IS NULL;
+
+-- Seed new config keys
+INSERT INTO security_config (config_key, config_value, description) VALUES
+  ('mfa_email_otp_expiry_minutes', '10',         'Email OTP validity window in minutes'),
+  ('mfa_totp_issuer',              'FlatPlanet',  'Issuer name shown in authenticator apps'),
+  ('mfa_max_otp_attempts',         '5',           'Max wrong OTP attempts before challenge expires')
 ON CONFLICT (config_key) DO NOTHING;
+
+-- NOTE (U6): V8 seeded 'mfa_otp_max_attempts' (old key from Phase 1 SMS code).
+-- Phase 2 uses 'mfa_max_otp_attempts' (new unified key). Both rows may exist in DB.
+-- The Phase 2 MfaService reads ONLY 'mfa_max_otp_attempts'. The old key is orphaned.
 ```
+
+---
+
+## ⚠️ Build Note — Steps 2.2 through 2.12 (NEW3)
+
+Steps 2.2–2.12 form a single non-building batch. Deleting SMS files (2.2), dropping phone entity fields (2.3), and rewriting MfaService (2.11) are interdependent — the build will be broken until Step 2.12 is complete.
+
+**Do NOT run `dotnet build` between Steps 2.2 and 2.12.** Only build after Step 2.12.
 
 ---
 
@@ -466,17 +521,70 @@ ON CONFLICT (config_key) DO NOTHING;
 **Cloud checklist before deleting:**
 - Search all `.cs` files for `ISmsSender`, `SmsOptions`, `TwilioSmsSender`, `ConsoleSmsSender`
 - Confirm zero remaining usages after removal
-- `dotnet build` must pass after deletions
+- Do NOT build here — see batch build note above (T1 fix)
 
 ---
 
-## Step 2.3 — Purge phone fields from `User` entity and repositories
+## Step 2.3 — Purge phone fields + SMS DTOs (GAP G7 + G8 fixed)
 
-**Files to change:**
+**Files to change — Entity:**
 - `src/FlatPlanet.Security.Domain/Entities/User.cs` — remove `PhoneNumber`, `PhoneVerified`; add `MfaTotpSecret`, `MfaTotpEnrolled`
-- `src/FlatPlanet.Security.Application/Interfaces/Repositories/IUserRepository.cs` — remove any phone-specific methods; add `UpdateMfaTotpSecretAsync(Guid userId, string? encryptedSecret)`, `SetMfaTotpEnrolledAsync(Guid userId, bool enrolled)`
+
+**Files to change — Repository:**
+- `src/FlatPlanet.Security.Application/Interfaces/Repositories/IUserRepository.cs`:
+  - **Remove** `UpdatePhoneNumberAsync(Guid userId, string phoneNumber)` *(GAP G8 — explicitly named)*
+  - **Add** `UpdateMfaTotpSecretAsync(Guid userId, string? encryptedSecret)`
+  - **Add** `SetMfaTotpEnrolledAsync(Guid userId, bool enrolled)` — sets `mfa_totp_enrolled`, `mfa_enabled = true`, `mfa_method = 'totp'` when `enrolled = true`
+  - **Add** `ResetMfaColumnsAsync(Guid userId)` *(T2 fix)* — single UPDATE: `mfa_totp_secret = null, mfa_totp_enrolled = false, mfa_enabled = false, mfa_method = null`
 - `src/FlatPlanet.Security.Infrastructure/Repositories/UserRepository.cs` — implement new methods, remove phone columns from all SELECT/INSERT/UPDATE SQL
-- Search ALL files for `PhoneNumber`, `phone_number` in user context — remove every remaining reference
+
+**Files to DELETE — SMS-only DTOs (GAP G7):**
+- `src/FlatPlanet.Security.Application/DTOs/Mfa/EnrollPhoneRequest.cs`
+- `src/FlatPlanet.Security.Application/DTOs/Mfa/EnrollPhoneResponse.cs`
+- `src/FlatPlanet.Security.Application/DTOs/Mfa/VerifyOtpRequest.cs`
+
+**Files to CREATE — New DTOs (GAP G7):**
+- `src/FlatPlanet.Security.Application/DTOs/Mfa/BeginTotpEnrolmentResponse.cs`:
+  ```csharp
+  public class BeginTotpEnrolmentResponse
+  {
+      public string QrCodeUri { get; set; } = string.Empty;
+  }
+  ```
+- `src/FlatPlanet.Security.Application/DTOs/Mfa/VerifyTotpEnrolmentRequest.cs`:
+  ```csharp
+  public class VerifyTotpEnrolmentRequest
+  {
+      [Required] public string TotpCode { get; set; } = string.Empty;
+  }
+  ```
+- `src/FlatPlanet.Security.Application/DTOs/Mfa/VerifyLoginTotpRequest.cs`:
+  ```csharp
+  public class VerifyLoginTotpRequest
+  {
+      [Required] public Guid UserId { get; set; }
+      [Required] [StringLength(8, MinimumLength = 6)] public string TotpCode { get; set; } = string.Empty;
+  }
+  ```
+
+**Files to CREATE — Admin response DTO (U2 fix):**
+- `src/FlatPlanet.Security.Application/DTOs/Mfa/UserMfaStatusResponse.cs`:
+  ```csharp
+  public class UserMfaStatusResponse
+  {
+      public bool MfaEnabled { get; set; }
+      public string? MfaMethod { get; set; }        // "totp" | "email_otp" | null
+      public bool MfaTotpEnrolled { get; set; }
+  }
+  ```
+
+**Files to UPDATE — Existing DTOs:**
+- `src/FlatPlanet.Security.Application/DTOs/Mfa/MfaLoginVerifyRequest.cs` — rename `Code` → `OtpCode`; keep `ChallengeId` as `Guid`
+
+**Cloud checklist:**
+- Search ALL `.cs` files for `PhoneNumber`, `phone_number`, `PhoneVerified`, `phone_verified` in user context
+- Confirm zero remaining references after Step 2.3 completes
+- Do NOT build here — see batch build note above (T1 fix)
 
 ---
 
@@ -533,32 +641,74 @@ Check NuGet for the current latest stable version before adding.
 
 ---
 
-## Step 2.7 — `MfaChallenge` entity + repository updates
+## Step 2.7 — `MfaChallenge` entity + repository updates (GAP G2 + G3 fixed)
 
 **Files to change:**
 - `src/FlatPlanet.Security.Domain/Entities/MfaChallenge.cs`:
   - Remove `PhoneNumber`
   - Add `public string ChallengeType { get; set; } = "email_otp"`
+
 - `src/FlatPlanet.Security.Application/Interfaces/Repositories/IMfaChallengeRepository.cs`:
   - Remove any phone-related signatures
-  - Add `Task<MfaChallenge?> GetActiveByUserIdAndTypeAsync(Guid userId, string challengeType)`
+  - **Remove** `HasVerifiedChallengeAsync` *(GAP G2 fix — no longer used; SyncStatusAsync now reads user.MfaTotpEnrolled directly)*
+  - **Remove** `GetActiveByUserIdAsync(Guid userId)` *(V1 fix — old untyped version, no callers after Phase 2; replaced by GetActiveByUserIdAndTypeAsync)*
+  - **Remove** `InvalidateActiveAsync(Guid userId)` *(W1 fix — global invalidation, no callers after Phase 2; replaced by InvalidateActiveByTypeAsync)*
+  - **Add** `Task<MfaChallenge?> GetActiveByUserIdAndTypeAsync(Guid userId, string challengeType)`
+  - **Add** `Task InvalidateActiveByTypeAsync(Guid userId, string challengeType)` *(GAP G3 fix)*
+
 - `src/FlatPlanet.Security.Infrastructure/Repositories/MfaChallengeRepository.cs`:
-  - `CreateAsync` INSERT: remove `phone_number`, add `challenge_type`
-  - `HasVerifiedChallengeAsync`: **CRITICAL FIX** — add `AND challenge_type = 'totp_enrollment'` to WHERE clause. Without this, an email OTP login would incorrectly set the user as identity-verified.
-  - Implement `GetActiveByUserIdAndTypeAsync`
+  - `CreateAsync` INSERT: remove `phone_number` column, add `challenge_type` column
+  - **Remove** `HasVerifiedChallengeAsync` method
+  - **Remove** `GetActiveByUserIdAsync` method *(V1 fix — dead code after Phase 2)*
+  - **Remove** `InvalidateActiveAsync` method *(W1 fix — dead code after Phase 2)*
+  - **Add** `GetActiveByUserIdAndTypeAsync`:
+    ```sql
+    SELECT * FROM mfa_challenges
+    WHERE user_id = @UserId AND challenge_type = @ChallengeType
+      AND verified_at IS NULL AND expires_at > now()
+    ORDER BY created_at DESC LIMIT 1
+    ```
+  - **Add** `InvalidateActiveByTypeAsync` *(GAP G3 fix — only invalidates challenges of the specified type)*:
+    ```sql
+    UPDATE mfa_challenges SET expires_at = now()
+    WHERE user_id = @UserId AND challenge_type = @ChallengeType
+      AND verified_at IS NULL AND expires_at > now()
+    ```
 
 ---
 
-## Step 2.8 — Rename `OtpVerified` → `MfaVerified`
+## Step 2.8 — Rename `OtpVerified` → `MfaVerified` + fix SyncStatusAsync (GAP G2 fixed)
 
 **Files to search and update:**
-- `IdentityVerificationStatusDto.cs`
-- `IdentityVerificationStatus.cs` (entity)
-- `IdentityVerificationService.cs`
-- `IdentityVerificationRepository.cs` + SQL queries
-- Any migration or seed referencing the column
+- `IdentityVerificationStatusDto.cs` — rename `OtpVerified` → `MfaVerified`
+- `IdentityVerificationStatus.cs` (entity) — rename `OtpVerified` → `MfaVerified`
+- `IdentityVerificationRepository.cs` + SQL queries — rename `otp_verified` → `mfa_verified`
 
-This is a rename only — no logic change. Cloud searches for `OtpVerified`, `otp_verified` across the entire solution before making changes.
+**`IdentityVerificationService.cs` — logic change required (GAP G2):**
+
+Current `SyncStatusAsync` calls `_mfaChallenges.HasVerifiedChallengeAsync(userId)` to determine if the user has verified OTP. After Phase 2, TOTP enrollment doesn't create a challenge row — it sets `user.MfaTotpEnrolled = true`. So `HasVerifiedChallengeAsync` would always return `false`.
+
+**Fix:** Remove `IMfaChallengeRepository` dependency from `IdentityVerificationService`. Inject `IUserRepository`. Rewrite the first lines of `SyncStatusAsync`:
+
+```csharp
+// BEFORE (Phase 1)
+var otpVerified = await _mfaChallenges.HasVerifiedChallengeAsync(userId);
+
+// AFTER (Phase 2)
+var user = await _users.GetByIdAsync(userId);
+var mfaVerified = user?.MfaTotpEnrolled ?? false;
+```
+
+Update `IdentityVerificationService` constructor: remove `IMfaChallengeRepository _mfaChallenges`, add `IUserRepository _users`.
+
+Also add V23 DB migration entry for the column rename in `identity_verification_status`:
+```sql
+ALTER TABLE identity_verification_status
+  RENAME COLUMN otp_verified TO mfa_verified;
+```
+Add this to `db/V23__mfa_totp_and_challenge_type.sql` at the end (Cloud: add this section to the migration file from Step 2.1).
+
+Cloud searches `otp_verified`, `OtpVerified` across the entire solution before making changes.
 
 ---
 
@@ -594,7 +744,7 @@ Cloud searches for all usages of `LoginResponse` and `ChallengeId` after changin
 public interface IMfaService
 {
     // TOTP enrolment
-    Task<(string QrCodeUri, string EncryptedSecret)> BeginTotpEnrolmentAsync(Guid userId);
+    Task<BeginTotpEnrolmentResponse> BeginTotpEnrolmentAsync(Guid userId); // T5 fix — returns DTO, not tuple; secret already stored in DB
     Task<LoginResponse> VerifyTotpEnrolmentAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent);
 
     // Login
@@ -603,7 +753,7 @@ public interface IMfaService
     Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent);
 
     // Management
-    Task EnableMfaAsync(Guid userId, string method);       // "totp" | "email_otp"
+    // NOTE: EnableMfaAsync removed — no endpoint calls it. SetMfaTotpEnrolledAsync handles enabling.
     Task DisableMfaAsync(Guid userId, Guid requestedBy);
     Task ResetMfaAsync(Guid userId, Guid requestedBy);     // admin force-reset
 }
@@ -618,6 +768,7 @@ public interface IMfaService
 **Constructor dependencies:**
 - `IMfaChallengeRepository`
 - `IUserRepository`
+- `IIdentityVerificationService` *(NEW1 fix — required for SyncStatusAsync after TOTP enrolment)*
 - `ISecurityConfigRepository`
 - `IJwtService`
 - `IAuditLogRepository`
@@ -632,58 +783,118 @@ public interface IMfaService
 
 **Method logic:**
 
-### `BeginTotpEnrolmentAsync(userId)`
+### `BeginTotpEnrolmentAsync(userId)` (GAP G7 guard added)
 1. Get user — throw `KeyNotFoundException` if not found
-2. Generate 20-byte random secret: `KeyGeneration.GenerateRandomKey(20)` (OtpNet)
-3. Encrypt: `_encryptor.Encrypt(secret)` → `encryptedSecret`
-4. Store: `await _users.UpdateMfaTotpSecretAsync(userId, encryptedSecret)` — sets `mfa_totp_enrolled = false`
-5. Build QR URI: `otpauth://totp/{issuer}:{email}?secret={Base32.Encode(secret)}&issuer={issuer}&algorithm=SHA1&digits=6&period=30`
-6. Return `(qrCodeUri, encryptedSecret)`
+2. **Guard (GAP G7):** `if (user.MfaTotpEnrolled) throw new InvalidOperationException("TOTP already enrolled. Contact admin to reset.")`
+3. Generate 20-byte random secret: `KeyGeneration.GenerateRandomKey(20)` (OtpNet)
+4. Encrypt: `_encryptor.Encrypt(secret)` → `encryptedSecret`
+5. Store: `await _users.UpdateMfaTotpSecretAsync(userId, encryptedSecret)` — does NOT set `mfa_totp_enrolled = true` yet (only verification does that)
+6. Read issuer from config: `mfa_totp_issuer` (default `"FlatPlanet"`)
+7. Build QR URI: `otpauth://totp/{issuer}:{email}?secret={Base32Encoding.ToString(secret)}&issuer={issuer}&algorithm=SHA1&digits=6&period=30`
+   *(V2 fix — OtpNet API is `Base32Encoding.ToString(byte[])`, NOT `Base32.Encode()` — wrong class name causes compile error)*
+8. Return `new BeginTotpEnrolmentResponse { QrCodeUri = qrUri }` *(T5 fix — EncryptedSecret is never returned to caller)*
 
-### `VerifyTotpEnrolmentAsync(userId, totpCode)`
-1. Get user, get `MfaTotpSecret` — throw if null (enrolment not started)
+### `VerifyTotpEnrolmentAsync(userId, totpCode)` (GAP G2 identity sync added)
+1. Get user, get `MfaTotpSecret` — throw `InvalidOperationException` if null (enrolment not started)
 2. Decrypt secret: `_encryptor.Decrypt(user.MfaTotpSecret)`
 3. Verify: `new Totp(secret).VerifyTotp(totpCode, out _, VerificationWindow.RfcSpecifiedNetworkDelay)` (OtpNet, allows ±1 step)
-4. If invalid: audit `MfaFailure`, throw `UnauthorizedAccessException`
-5. If valid: set `mfa_totp_enrolled = true`, `mfa_enabled = true`, `mfa_method = "totp"` on user
-6. Create session + refresh token inside transaction (same pattern as `AuthService.LoginAsync`)
-7. Fire-and-forget: audit `MfaEnrolmentComplete`
-8. Return full `LoginResponse`
+4. If invalid: audit `MfaFailure`, throw `UnauthorizedAccessException("Invalid TOTP code.")`
+5. If valid:
+   - `await _users.SetMfaTotpEnrolledAsync(userId, true)` — sets `mfa_totp_enrolled = true`, `mfa_enabled = true`, `mfa_method = "totp"`
+   - `await _identityVerification.SyncStatusAsync(userId)` *(GAP G2 fix — triggers mfa_verified = true)*
+6. Load config: `maxSessions`, `absoluteTimeout`, `idleTimeoutMinutes`, `refreshExpiryDays`, `accessExpiryMinutes`
+7. Open transaction. Inside transaction *(T4 fix — enforce session cap)*:
+   - `await _sessions.EvictOldestIfOverLimitAsync(userId, maxSessions, conn, tx)`
+   - `await _sessions.CreateAsync(session, conn, tx)`
+   - `await _refreshTokens.CreateAsync(refreshToken, conn, tx)`
+   - Commit
+8. Fire-and-forget: audit `MfaEnrolmentComplete`
+9. Build access token *(Y1 fix — must not omit this)*:
+   ```csharp
+   var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(userId);
+   var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
+   ```
+10. Return full `LoginResponse` — AccessToken, RefreshToken, ExpiresIn, IdleTimeoutMinutes, User (all fields populated)
 
-### `VerifyLoginTotpAsync(userId, totpCode)`
-1. Get user, decrypt TOTP secret
-2. Verify code with OtpNet
+### `VerifyLoginTotpAsync(userId, totpCode)` (T4 fix)
+1. Get user — throw `KeyNotFoundException("User not found.")` if null *(U5 fix)*
+   Get `user.MfaTotpSecret` — throw `InvalidOperationException("TOTP not enrolled.")` if null *(U5 fix — prevents NullReferenceException on decrypt)*
+   Decrypt: `_encryptor.Decrypt(user.MfaTotpSecret)`
+2. Verify code with OtpNet (`VerificationWindow.RfcSpecifiedNetworkDelay`)
 3. If invalid: audit `MfaFailure`, throw `UnauthorizedAccessException`
-4. If valid: create session + refresh token in transaction, fire-and-forget audit `MfaSuccess`, return `LoginResponse`
+4. If valid: load config (maxSessions, absoluteTimeout, idleTimeoutMinutes, refreshExpiryDays, accessExpiryMinutes)
+5. Open transaction. Inside transaction *(T4 fix — enforce session cap before session creation)*:
+   - `await _sessions.EvictOldestIfOverLimitAsync(userId, maxSessions, conn, tx)`
+   - `await _sessions.CreateAsync(session, conn, tx)`
+   - `await _refreshTokens.CreateAsync(refreshToken, conn, tx)`
+   - Commit
+6. Build access token *(Y1 fix)*:
+   ```csharp
+   var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(userId);
+   var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
+   ```
+7. Fire-and-forget: audit `MfaSuccess`
+8. Return full `LoginResponse` — AccessToken, RefreshToken, ExpiresIn, IdleTimeoutMinutes, User (all fields populated)
 
-### `SendEmailOtpAsync(userId, ipAddress)`
-1. Get user (need email)
-2. Invalidate any active `email_otp` challenge: `await _mfaChallenges.InvalidateActiveAsync(userId)`
-3. Generate 6-digit OTP: `Random.Shared.Next(100_000, 1_000_000).ToString()`
-4. Hash: `SHA256(Encoding.UTF8.GetBytes(otp))` → hex string → `otp_hash`
+### `SendEmailOtpAsync(userId, ipAddress)` (GAP G1 + G3 fixed)
+1. Get user — throw `KeyNotFoundException("User not found.")` if null *(V3 fix)*
+2. Invalidate any active `email_otp` challenge only *(GAP G3 fix)*: `await _mfaChallenges.InvalidateActiveByTypeAsync(userId, "email_otp")`
+3. Generate 6-digit OTP using `RandomNumberGenerator` *(GAP G1 fix — NOT Random.Shared)*:
+   ```csharp
+   private static string GenerateOtp(int length) =>
+       string.Join("", RandomNumberGenerator.GetBytes(length).Select(b => (b % 10).ToString()));
+   var otp = GenerateOtp(6);
+   ```
+4. Hash: `_jwt.HashToken(otp)` → `otp_hash` *(U4 fix — use existing IJwtService helper, same as Phase 1; DO NOT use raw SHA-256 here; VerifyLoginEmailOtpAsync also uses _jwt.HashToken() for comparison — they must be identical)*
 5. Read expiry from config: `mfa_email_otp_expiry_minutes` (default 10)
 6. Create challenge: `challenge_type = "email_otp"`, `expires_at = now + expiry`
-7. Fire-and-forget: `await _emailService.SendMfaOtpEmailAsync(user.Email, otp, challenge.ExpiresAt)` — wrapped in try/catch LogError
+7. Await email send *(T3 fix — NOT fire-and-forget; silent SMTP failure means user never gets the code)*:
+   ```csharp
+   try
+   {
+       await _emailService.SendMfaOtpEmailAsync(user.Email, otp, challenge.ExpiresAt);
+   }
+   catch (Exception ex)
+   {
+       _logger.LogError(ex, "Email OTP send failed for user {UserId}", userId);
+       throw new ServiceUnavailableException("Email service is temporarily unavailable. Please try again.");
+   }
+   ```
 8. Return the `MfaChallenge` entity
 
-### `VerifyLoginEmailOtpAsync(challengeId, otpCode)`
+### `VerifyLoginEmailOtpAsync(challengeId, otpCode)` (T4 fix)
 1. Load challenge by ID — throw `KeyNotFoundException` if not found
-2. Verify `challenge_type == "email_otp"`, `verified_at == null`, `expires_at > now`
-3. Check `attempts < config["mfa_max_otp_attempts"]` — throw `TooManyRequestsException` if at limit
-4. Hash presented code, compare to `challenge.OtpHash`
+2. Verify guards *(W3 fix — explicit exceptions)*:
+   - `challenge_type != "email_otp"` → throw `ArgumentException("Challenge is not an email OTP challenge.")`
+   - `verified_at != null` → throw `InvalidOperationException("Challenge has already been used.")`
+   - `expires_at <= now` → throw `ArgumentException("OTP has expired.")`
+3. Load max attempts: `await _securityConfig.GetValueAsync("mfa_max_otp_attempts")` (default 5)
+   *(U6 fix — the old Phase 1 `GetMaxAttemptsAsync()` helper reads `"mfa_otp_max_attempts"` — that is the WRONG key in Phase 2. Do NOT reuse it. Read `"mfa_max_otp_attempts"` directly.)*
+   Check `challenge.Attempts >= maxAttempts` — throw `TooManyRequestsException` if at limit
+4. Hash presented code: `_jwt.HashToken(otpCode)` — compare to `challenge.OtpHash` *(U4 fix — must use same method as SendEmailOtpAsync)*
 5. If mismatch: `IncrementAttemptsAsync`, audit `MfaFailure`, throw `UnauthorizedAccessException`
 6. If valid: `MarkVerifiedAsync(challengeId)`
-7. Load user from `challenge.UserId`, create session + refresh token in transaction
-8. Fire-and-forget: audit `MfaSuccess`
-9. Return `LoginResponse`
-10. **ISO 27001 compliance:** email OTP login does NOT set `mfa_verified = true` — that is only set by TOTP enrolment (`VerifyTotpEnrolmentAsync`)
+7. Load user, load config (maxSessions, absoluteTimeout, idleTimeoutMinutes, refreshExpiryDays, accessExpiryMinutes)
+8. Open transaction. Inside transaction *(T4 fix — enforce session cap before session creation)*:
+   - `await _sessions.EvictOldestIfOverLimitAsync(userId, maxSessions, conn, tx)`
+   - `await _sessions.CreateAsync(session, conn, tx)`
+   - `await _refreshTokens.CreateAsync(refreshToken, conn, tx)`
+   - Commit
+9. Build access token *(Y1 fix)*:
+   ```csharp
+   var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
+   var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
+   ```
+10. Fire-and-forget: audit `MfaSuccess`
+11. Return full `LoginResponse` — AccessToken, RefreshToken, ExpiresIn, IdleTimeoutMinutes, User (all fields populated)
+12. **ISO 27001 compliance:** email OTP login does NOT set `mfa_verified = true` — that is only set by TOTP enrolment (`VerifyTotpEnrolmentAsync`)
 
 ### `DisableMfaAsync(userId, requestedBy)`
-1. Clear `mfa_totp_secret`, set `mfa_totp_enrolled = false`, `mfa_enabled = false`, `mfa_method = null`
+1. `await _users.ResetMfaColumnsAsync(userId)` *(W2 fix — use T2 atomic method, do NOT write individual column updates)*
 2. Audit `MfaDisabled` with `requested_by`
 
 ### `ResetMfaAsync(userId, requestedBy)`
-1. Same as Disable — used by admin force-reset path
+1. `await _users.ResetMfaColumnsAsync(userId)` *(W2 fix — same atomic method as DisableMfaAsync)*
 2. Audit `MfaReset` with `requested_by`
 
 ---
@@ -707,7 +918,10 @@ With:
 // NEW
 if (user.MfaEnabled)
 {
-    if (!user.MfaTotpEnrolled)
+    // U1 fix: only gate on MfaTotpEnrolled for TOTP users.
+    // Email OTP users always have mfa_totp_enrolled = false — checking it globally
+    // would trap all email_otp users in the enrolment-pending branch forever.
+    if (user.MfaMethod == "totp" && !user.MfaTotpEnrolled)
     {
         // MFA is enabled but TOTP hasn't been enrolled yet
         // Return a flag so the client can start the enrolment flow
@@ -715,46 +929,53 @@ if (user.MfaEnabled)
         {
             RequiresMfa = true,
             MfaEnrolmentPending = true,
-            MfaMethod = user.MfaMethod ?? "totp"
+            MfaMethod = "totp"
         };
     }
 
     if (user.MfaMethod == "totp")
     {
-        // Client presents TOTP code directly — no challenge needed
+        // Client presents TOTP code directly — no server challenge needed
+        // NEW2 fix: include UserId so client can call /mfa/totp/verify
         return new LoginResponse
         {
             RequiresMfa = true,
-            MfaMethod = "totp"
+            MfaMethod = "totp",
+            User = new UserProfileDto { UserId = user.Id }
         };
     }
 
-    // Email OTP path
+    // Email OTP path — send challenge, return challengeId
     var challenge = await _mfa.SendEmailOtpAsync(user.Id, ipAddress);
     return new LoginResponse
     {
         RequiresMfa = true,
         MfaMethod = "email_otp",
-        ChallengeId = challenge.Id
+        ChallengeId = challenge.Id,
+        User = new UserProfileDto { UserId = user.Id }
     };
 }
 ```
 
 ---
 
-## Step 2.13 — Update `MfaController` endpoints
+## Step 2.13 — Update `MfaController` endpoints (GAP G4 + G5 fixed)
 
 **File:** `src/FlatPlanet.Security.API/Controllers/MfaController.cs`
 
-| Method | Route | Auth required | Body / Return |
-|---|---|---|---|
-| `POST` | `/api/mfa/totp/begin-enrolment` | JWT | → `{ qrCodeUri }` |
-| `POST` | `/api/mfa/totp/verify-enrolment` | JWT | `{ totpCode }` → `LoginResponse` |
-| `POST` | `/api/mfa/totp/verify` | None (userId from request body) | `{ userId, totpCode }` → `LoginResponse` |
-| `POST` | `/api/mfa/email-otp/verify` | None | `{ challengeId, otpCode }` → `LoginResponse` |
-| `POST` | `/api/mfa/disable` | JWT | → `204 No Content` |
+Keep `[Route("api/v1/mfa")]` on the class — all routes stay under `/api/v1/mfa/...` *(GAP G4 fix)*.
 
-Remove all SMS-based endpoints (`send-otp`, `verify-otp` with phone parameter).
+| Method | Route | Auth | Body | Return | Rate limit |
+|---|---|---|---|---|---|
+| `POST` | `/api/v1/mfa/totp/begin-enrolment` | JWT | — | `BeginTotpEnrolmentResponse` | — |
+| `POST` | `/api/v1/mfa/totp/verify-enrolment` | JWT | `VerifyTotpEnrolmentRequest` | `LoginResponse` | — |
+| `POST` | `/api/v1/mfa/totp/verify` | None | `VerifyLoginTotpRequest` | `LoginResponse` | `mfa-verify` |
+| `POST` | `/api/v1/mfa/email-otp/verify` | None | `MfaLoginVerifyRequest` | `LoginResponse` | `mfa-verify` |
+| `POST` | `/api/v1/mfa/disable` | JWT | — | `204 No Content` | — |
+
+The `mfa-verify` rate limit policy is defined in Step 2.15 *(GAP G5 fix)*.
+
+**Remove** all three existing SMS-based actions: `Enroll`, `VerifyOtp`, `LoginVerify`.
 
 ---
 
@@ -762,17 +983,19 @@ Remove all SMS-based endpoints (`send-otp`, `verify-otp` with phone parameter).
 
 **File:** `src/FlatPlanet.Security.API/Controllers/Admin/AdminMfaController.cs` *(new)*
 
-| Method | Route | Description |
-|---|---|---|
-| `GET` | `/api/admin/users/{userId}/mfa/status` | MFA enabled, method, enrolled state |
-| `POST` | `/api/admin/users/{userId}/mfa/disable` | Disable MFA for a user |
-| `POST` | `/api/admin/users/{userId}/mfa/reset` | Force-reset MFA (clear secret, disable) |
+Use `[Route("api/v1/admin")]` to match `AdminAuditLogController` convention *(NEW4 fix — `/v1` required)*.
 
-All actions require admin policy (check existing admin auth pattern in the codebase and match it).
+| Method | Route | Return | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/admin/users/{userId}/mfa/status` | `200 UserMfaStatusResponse` | MFA enabled, method, enrolled state |
+| `POST` | `/api/v1/admin/users/{userId}/mfa/disable` | `204 No Content` | Disable MFA — calls `DisableMfaAsync(userId, adminId)` |
+| `POST` | `/api/v1/admin/users/{userId}/mfa/reset` | `204 No Content` | Force-reset MFA — calls `ResetMfaAsync(userId, adminId)` *(V4 fix — return types added)* |
+
+All actions require `PlatformOwner` policy (match `AdminAuditLogController` pattern).
 
 ---
 
-## Step 2.15 — `Program.cs` final updates
+## Step 2.15 — `Program.cs` final updates (GAP G5 fixed)
 
 **File:** `src/FlatPlanet.Security.API/Program.cs`
 
@@ -781,6 +1004,18 @@ All actions require admin policy (check existing admin auth pattern in the codeb
 - Add: `builder.Services.AddSingleton<ITotpSecretEncryptor, TotpSecretEncryptor>()`
 - Verify: `IMfaService` → `MfaService` is registered (add if missing)
 - Verify: `IEmailService` → `SmtpEmailService` is still registered (it should be from password reset)
+- **Add `mfa-verify` rate limit policy (GAP G5 fix)** — 5 requests per minute per IP, applied to anonymous TOTP and email OTP verify endpoints:
+  ```csharp
+  // mfa-verify: 5 per min per IP — anonymous endpoints that accept userId + code
+  options.AddPolicy("mfa-verify", context =>
+      RateLimitPartition.GetFixedWindowLimiter(
+          partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+          factory: _ => new FixedWindowRateLimiterOptions
+          {
+              PermitLimit = 5,
+              Window = TimeSpan.FromMinutes(1)
+          }));
+  ```
 
 ---
 
@@ -790,16 +1025,28 @@ All actions require admin policy (check existing admin auth pattern in the codeb
 - `tests/FlatPlanet.Security.Tests/AuthServiceTests.cs`:
   - `CreateService()` already has `Mock<IMfaService>` and `Mock<IMemoryCache>` (from Step 1.1) — verify
   - Add/update MFA gate tests:
-    - `MfaEnabled=true + MfaTotpEnrolled=false` → `LoginResponse.MfaEnrolmentPending == true`
+    - `MfaEnabled=true + MfaMethod="totp" + MfaTotpEnrolled=false` → `MfaEnrolmentPending=true` *(V5 fix — MfaMethod="totp" required; without it the U1 gate doesn't fire)*
     - `MfaEnabled=true + MfaMethod="totp" + MfaTotpEnrolled=true` → `RequiresMfa=true, MfaMethod="totp"`
-    - `MfaEnabled=true + MfaMethod="email_otp"` → `RequiresMfa=true, ChallengeId != null`
+    - `MfaEnabled=true + MfaMethod="email_otp"` → `RequiresMfa=true, MfaMethod="email_otp", ChallengeId != null`
+    - `MfaEnabled=true + MfaMethod=null + MfaTotpEnrolled=false` → falls through to email OTP path (NOT enrolment pending) *(V5 fix — additional test verifying U1 gate doesn't over-fire)*
     - `MfaEnabled=false` → full `LoginResponse` with tokens (existing happy path)
 
 - `tests/FlatPlanet.Security.Tests/MfaServiceTests.cs` *(new)*:
-  - `SendEmailOtpAsync`: challenge created, `SendMfaOtpEmailAsync` called, previous challenge invalidated
+  - `SendEmailOtpAsync`: challenge created, `SendMfaOtpEmailAsync` called, previous challenge invalidated by type only (not global)
+  - `SendEmailOtpAsync`: SMTP failure → `ServiceUnavailableException` thrown (T3 — email send is awaited, not fire-and-forget)
   - `VerifyLoginEmailOtpAsync`: success path, wrong code, expired challenge, max attempts exceeded
+  - `VerifyLoginEmailOtpAsync`: challenge_type != "email_otp" → `ArgumentException` *(X2 fix — W3 guard test)*
+  - `VerifyLoginEmailOtpAsync`: session cap enforced — `EvictOldestIfOverLimitAsync` called inside transaction *(T4)*
   - `BeginTotpEnrolmentAsync`: encrypted secret stored on user, QR URI returned
-  - `VerifyTotpEnrolmentAsync`: valid code → tokens issued; invalid code → UnauthorizedAccessException
+  - `BeginTotpEnrolmentAsync`: re-enrollment guard — throws `InvalidOperationException` when `MfaTotpEnrolled = true` *(T6)*
+  - `VerifyTotpEnrolmentAsync`: valid code → tokens issued; invalid code → `UnauthorizedAccessException`
+  - `VerifyTotpEnrolmentAsync`: valid code → `SyncStatusAsync` called — verifies `mfa_verified` is set in identity_verification_status *(U3 / G2 fix verification)*
+  - `VerifyTotpEnrolmentAsync`: session cap enforced — `EvictOldestIfOverLimitAsync` called inside transaction *(T4)*
+  - `VerifyLoginTotpAsync`: valid code → full `LoginResponse` with tokens *(W4 fix — success path)*
+  - `VerifyLoginTotpAsync`: invalid code → `UnauthorizedAccessException` *(W4 fix)*
+  - `VerifyLoginTotpAsync`: session cap enforced — `EvictOldestIfOverLimitAsync` called inside transaction *(T4)*
+  - `DisableMfaAsync`: `ResetMfaColumnsAsync` called, audit `MfaDisabled` logged *(V6 fix)*
+  - `ResetMfaAsync`: `ResetMfaColumnsAsync` called, audit `MfaReset` logged *(V6 fix)*
 
 ---
 
@@ -807,9 +1054,31 @@ All actions require admin policy (check existing admin auth pattern in the codeb
 
 ```
 Cloud: complete Tier 1 self-review. Write summary. Push branch. Ping Lightning.
-Lightning: Tier 2 full diff review — blast radius on all 25 original audit issues,
-  MFA flow correctness, ISO 27001 compliance (email OTP ≠ mfa_verified),
-  HasVerifiedChallengeAsync fix confirmed, no phone references remaining.
+Lightning: Tier 2 full diff review checklist:
+  ✓ No phone_number / PhoneNumber references remaining anywhere
+  ✓ OTP generation uses RandomNumberGenerator (NOT Random.Shared)
+  ✓ VerifyTotpEnrolmentAsync calls SyncStatusAsync after enrollment
+  ✓ SyncStatusAsync uses user.MfaTotpEnrolled — NOT HasVerifiedChallengeAsync (which is gone)
+  ✓ SendEmailOtpAsync calls InvalidateActiveByTypeAsync("email_otp") — not InvalidateActiveAsync
+  ✓ All MFA controller routes are /api/v1/mfa/...
+  ✓ All Admin MFA routes are /api/v1/admin/...
+  ✓ mfa-verify rate limit applied to totp/verify and email-otp/verify actions
+  ✓ V23 resets SMS users before dropping phone columns
+  ✓ BeginTotpEnrolmentAsync guards against re-enrollment when already enrolled
+  ✓ No IMfaService SMS methods remain (EnrollAndSendOtpAsync, SendLoginOtpAsync, VerifyLoginOtpAsync)
+  ✓ MfaService constructor includes IIdentityVerificationService
+  ✓ LoginResponse for TOTP path includes User.UserId
+  ✓ LoginResponse for email OTP path includes User.UserId
+  ✓ SendEmailOtpAsync email send is awaited — not fire-and-forget — throws ServiceUnavailableException on SMTP failure
+  ✓ VerifyLoginTotpAsync: EvictOldestIfOverLimitAsync called inside session transaction
+  ✓ VerifyLoginEmailOtpAsync: EvictOldestIfOverLimitAsync called inside session transaction
+  ✓ MfaEnrolmentPending gate is scoped to MfaMethod=="totp" — email_otp users go straight to SendEmailOtpAsync
+  ✓ OTP hash uses _jwt.HashToken() in BOTH SendEmailOtpAsync (store) and VerifyLoginEmailOtpAsync (compare)
+  ✓ VerifyLoginEmailOtpAsync reads config key "mfa_max_otp_attempts" — NOT the old "mfa_otp_max_attempts"
+  ✓ QR URI uses Base32Encoding.ToString(secret) — NOT Base32.Encode()
+  ✓ All three session-creating methods call GetPlatformRoleNamesForUserAsync + IssueAccessTokenAsync before returning LoginResponse
+  ✓ V23 reset condition is WHERE mfa_enabled=true (not the narrow phone_verified/mfa_method='sms' condition)
+  ✓ dotnet build green after Step 2.12
 User: Tier 3 sign-off before commit and PR to develop.
 ```
 

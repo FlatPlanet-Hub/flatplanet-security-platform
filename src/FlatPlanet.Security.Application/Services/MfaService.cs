@@ -139,6 +139,7 @@ public class MfaService : IMfaService
 
         return new LoginResponse
         {
+            MfaEnrolled        = true,
             AccessToken        = accessToken,
             RefreshToken       = refreshTokenPlain,
             ExpiresIn          = Cfg("jwt_access_expiry_minutes", 60) * 60,
@@ -269,6 +270,20 @@ public class MfaService : IMfaService
         });
 
         return challenge;
+    }
+
+    public async Task<MfaChallenge> ResendEmailOtpAsync(Guid userId, string? ipAddress)
+    {
+        var user = await _users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        // P2-02: Do not reveal whether email OTP is configured — return the same error as an
+        // invalid userId so callers cannot probe MFA method by trying the resend endpoint.
+        if (!user.MfaEnabled || user.MfaMethod != "email_otp")
+            throw new KeyNotFoundException("User not found.");
+
+        // Delegates to SendEmailOtpAsync which invalidates the old challenge and sends a fresh one.
+        return await SendEmailOtpAsync(userId, ipAddress);
     }
 
     public async Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent)
@@ -449,6 +464,27 @@ public class MfaService : IMfaService
     }
 
     // ── Admin ────────────────────────────────────────────────────────────────
+
+    public async Task SetMfaMethodAsync(Guid userId, string method, Guid performedByUserId)
+    {
+        var found = await _users.SetMfaMethodAsync(userId, method);
+        if (!found)
+            throw new KeyNotFoundException("User not found.");
+
+        // Audit first — if cleanup fails the action is still recorded.
+        await _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId    = userId,
+            EventType = AuditEventType.MfaMethodSet,
+            Details   = JsonSerializer.Serialize(new { method, performed_by = performedByUserId })
+        });
+
+        // Invalidate in-flight email_otp challenges — the only challenge type in the system.
+        // TOTP has no challenge record (it is stateless), so no second invalidation is needed.
+        await Task.WhenAll(
+            _challenges.InvalidateActiveByTypeAsync(userId, "email_otp"),
+            _backupCodes.DeleteAllByUserAsync(userId));
+    }
 
     public async Task DisableMfaAsync(Guid userId)
     {

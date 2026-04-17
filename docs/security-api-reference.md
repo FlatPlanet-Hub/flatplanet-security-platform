@@ -1,6 +1,6 @@
 # FlatPlanet Security Platform — API Reference
 
-**Version**: 1.5.0
+**Version**: 1.6.0
 **Base URL**: `https://<your-host>/api/v1`
 **Content-Type**: `application/json`
 **Auth**: Bearer JWT or Service Token in `Authorization` header
@@ -28,6 +28,12 @@ Authorization: Bearer <service-token>
 ```
 
 Used by trusted backend services (e.g. HubApi) to call the platform without a user context. The service token is a static secret configured in `appsettings.json` under `ServiceToken.Token` (minimum 32 characters). On a valid service token, the caller is granted both `platform_owner` and `app_admin` roles — it has full access to all endpoints. Token comparison uses constant-time equality to prevent timing attacks.
+
+Optionally include an `X-Service-Name` header to identify the calling service in audit log entries. If omitted, the service name is recorded as `"unknown"`.
+
+```
+X-Service-Name: hub-api
+```
 
 **Access token lifetime**: configurable via `jwt_access_expiry_minutes` (default 60 min)
 **Refresh token lifetime**: configurable via `jwt_refresh_expiry_days` (default 7 days)
@@ -98,6 +104,7 @@ The `errors` object is keyed by field name. Each key holds an array of error mes
 | `422` | Business rule violation (e.g. deleting a role with active users) |
 | `429` | Rate limit exceeded |
 | `500` | Unhandled server error |
+| `503` | Downstream service temporarily unavailable (SMS provider, DB timeout) |
 
 ---
 
@@ -131,10 +138,14 @@ Verifies credentials against the platform's database (bcrypt, work factor 12). I
 
 #### Success Response — 200
 
+**Standard login (no MFA enrolled):**
+
 ```json
 {
   "success": true,
   "data": {
+    "requiresMfa": false,
+    "challengeId": null,
     "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
     "refreshToken": "v2.local.abc123...",
     "expiresIn": 3600,
@@ -149,10 +160,31 @@ Verifies credentials against the platform's database (bcrypt, work factor 12). I
 }
 ```
 
+**MFA challenge required (user has MFA enrolled):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "requiresMfa": true,
+    "challengeId": "b3d4e5f6-0000-0000-0000-000000000001",
+    "accessToken": "",
+    "refreshToken": "",
+    "expiresIn": 0,
+    "idleTimeoutMinutes": 0,
+    "user": { "userId": "00000000-0000-0000-0000-000000000000", "email": "", "fullName": "", "companyId": "" }
+  }
+}
+```
+
+When `requiresMfa` is `true`, the client must call `POST /api/v1/mfa/otp/login-verify` with the `challengeId` and the OTP code. Tokens are not issued until the challenge is verified.
+
 | Field | Type | Notes |
 |---|---|---|
-| `accessToken` | string | JWT. Lifetime = `jwt_access_expiry_minutes` × 60 seconds. |
-| `refreshToken` | string | Opaque token. Store securely. Single-use (rotated on each refresh). |
+| `requiresMfa` | boolean | `true` when the user has MFA enrolled and must complete a challenge before tokens are issued. |
+| `challengeId` | string (UUID) \| null | Present when `requiresMfa` is `true`. Pass to `POST /api/v1/mfa/otp/login-verify`. |
+| `accessToken` | string | JWT. Lifetime = `jwt_access_expiry_minutes` × 60 seconds. Empty string when `requiresMfa` is `true`. |
+| `refreshToken` | string | Opaque token. Store securely. Single-use (rotated on each refresh). Empty string when `requiresMfa` is `true`. |
 | `expiresIn` | integer | Access token lifetime in **seconds**. |
 | `idleTimeoutMinutes` | integer | Session idle timeout in **minutes**. Session is invalidated if no authenticated request arrives within this window. Use this to schedule heartbeats — fire at `idleTimeoutMinutes × 0.5` minutes. |
 | `user.userId` | UUID | Use this as the user identifier in downstream calls. |
@@ -341,6 +373,7 @@ GET /api/v1/auth/me?appSlug=dashboard-hub
 Changes the authenticated user's password. On success, all sessions and refresh tokens for the user are revoked, forcing a full re-login.
 
 **Auth required**: Yes (Bearer JWT)
+**Rate limit**: 5 requests per 15 minutes per user (keyed on JWT subject)
 
 #### Request
 
@@ -387,6 +420,7 @@ All new passwords (for both change-password and reset-password) must meet the fo
 | `400` | Passwords do not match. | `newPassword` and `confirmPassword` differ. |
 | `400` | *(policy message)* | `newPassword` fails the password policy (see above). |
 | `401` | — | Missing or invalid JWT. |
+| `429` | — | Rate limit exceeded (5 requests per 15 minutes per user). |
 
 #### Notes
 
@@ -400,6 +434,7 @@ All new passwords (for both change-password and reset-password) must meet the fo
 Initiates a password reset flow by sending a time-limited reset link to the user's email address. The response is identical whether or not the email exists in the system — this prevents user enumeration.
 
 **Auth required**: No
+**Rate limit**: 3 requests per 15 minutes per IP
 
 #### Request
 
@@ -428,6 +463,8 @@ This response is returned **regardless of whether the email is registered** to p
 | HTTP | Message | Cause |
 |---|---|---|
 | `400` | *(validation message)* | Missing or malformed `email` field. |
+| `429` | — | Rate limit exceeded (3 requests per 15 minutes per IP). |
+| `503` | SMS service is temporarily unavailable. Please try again. | SMTP delivery failed after retries. |
 
 #### Notes
 
@@ -525,6 +562,7 @@ No body.
 Checks whether the authenticated user has a required permission on a resource within a given app. Logs the decision to the audit log.
 
 **Auth required**: Yes
+**Rate limit**: 60 requests per minute per user (keyed on JWT subject)
 The `userId` is derived from the JWT — do **not** include it in the request body.
 
 #### Request
@@ -570,11 +608,13 @@ The `userId` is derived from the JWT — do **not** include it in the request bo
 |---|---|---|
 | `400` | appSlug is required. | Empty or missing `appSlug`. |
 | `401` | Invalid token. | JWT invalid or user ID claim missing. |
+| `429` | — | Rate limit exceeded (60 requests per minute per user). |
 
 #### Notes
 
 - A `200` response with `"allowed": false` is a valid and expected outcome — do not treat it as an error.
 - Both `authorize_allowed` and `authorize_denied` events are written to the audit log regardless of outcome.
+- The result is cached in memory for up to 2 minutes per `userId + appSlug + permission` combination. Role revocations may take up to 2 minutes to reflect.
 
 ---
 
@@ -1756,6 +1796,286 @@ GET /api/v1/apps/dashboard-hub/user-context
 
 ---
 
+## MFA
+
+SMS-based OTP for identity verification and MFA-gated login. Phase 2 will replace SMS with TOTP (Microsoft Authenticator compatible) — these endpoints are current for Phase 1.
+
+---
+
+### POST /api/v1/mfa/enroll
+
+Enrolls a phone number and sends a 6-digit OTP via SMS. The user must verify the code via `POST /api/v1/mfa/otp/verify` to complete enrollment and enable MFA on their account.
+
+**Auth required**: Yes (Bearer JWT)
+
+#### Request
+
+```json
+{
+  "phoneNumber": "+639171234567"
+}
+```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `phoneNumber` | string | Yes | Must be a valid phone number (E.164 format recommended). |
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": {
+    "maskedPhone": "+63917***4567",
+    "expiresAt": "2026-04-17T10:15:00Z"
+  }
+}
+```
+
+| Field | Notes |
+|---|---|
+| `maskedPhone` | Partially masked for confirmation display. |
+| `expiresAt` | UTC timestamp when the OTP expires (5 minutes from issue). |
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | *(validation message)* | Missing or invalid `phoneNumber`. |
+| `401` | — | Missing or invalid JWT. |
+| `503` | SMS service is temporarily unavailable. Please try again. | SMS delivery failed after Polly retry (3 attempts, exponential backoff). |
+
+---
+
+### POST /api/v1/mfa/otp/verify
+
+Verifies the OTP sent during enrollment. On success, MFA is enabled on the user's account and identity verification status is synced.
+
+**Auth required**: Yes (Bearer JWT)
+
+#### Request
+
+```json
+{
+  "code": "483921"
+}
+```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `code` | string | Yes | 4–8 character OTP code from the SMS. |
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": { "message": "MFA enrollment verified. MFA is now enabled on your account." }
+}
+```
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | *(validation message)* | Missing or out-of-range `code`. |
+| `401` | — | Missing or invalid JWT. |
+| `422` | Invalid or expired OTP. | Code is wrong, expired, or already used. |
+
+---
+
+### POST /api/v1/mfa/otp/login-verify
+
+Completes an MFA-gated login. Called after a login response returns `requiresMfa: true`. Issues tokens on success.
+
+**Auth required**: No (anonymous)
+
+#### Request
+
+```json
+{
+  "challengeId": "b3d4e5f6-0000-0000-0000-000000000001",
+  "code": "483921"
+}
+```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `challengeId` | UUID | Yes | From the `challengeId` field in the login response. |
+| `code` | string | Yes | 4–8 character OTP code from the SMS. |
+
+#### Success Response — 200
+
+Returns the same `LoginResponse` shape as `POST /api/v1/auth/login` with `requiresMfa: false` and tokens populated.
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | *(validation message)* | Missing or invalid fields. |
+| `422` | Invalid or expired OTP. | Code wrong, expired, max attempts exceeded, or challenge not found. |
+
+---
+
+## Identity Verification
+
+---
+
+### GET /api/v1/identity/verification/status
+
+Returns the identity verification status for the authenticated user. `fullyVerified` is recomputed from current platform config on every call — the stored DB value is not trusted.
+
+**Auth required**: Yes (Bearer JWT)
+
+#### Request
+
+```
+GET /api/v1/identity/verification/status
+```
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": {
+    "otpVerified": true,
+    "videoVerified": false,
+    "fullyVerified": true,
+    "verifiedAt": "2026-04-17T10:20:00Z"
+  }
+}
+```
+
+| Field | Notes |
+|---|---|
+| `otpVerified` | `true` if the user has completed OTP verification (MFA enrollment). |
+| `videoVerified` | `true` if video verification is complete. Always `false` in Phase 1 (not yet implemented). |
+| `fullyVerified` | Recomputed at query time. `true` when `otpVerified = true` AND (`require_video_verification = false` OR `videoVerified = true`). |
+| `verifiedAt` | UTC timestamp of when `fullyVerified` first became `true`. `null` if not yet fully verified. |
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `401` | — | Missing or invalid JWT. |
+
+---
+
+### GET /api/v1/identity/verification/service/status/{userId}
+
+Returns identity verification status for any user by ID. For server-to-server calls where downstream services need to gate access on identity verification state.
+
+**Auth required**: Yes — `PlatformOwner`
+
+#### Request
+
+```
+GET /api/v1/identity/verification/service/status/3f2504e0-4f89-11d3-9a0c-0305e82c3301
+```
+
+#### Success Response — 200
+
+Same shape as `GET /api/v1/identity/verification/status`.
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `401` | — | Missing or invalid token. |
+| `403` | — | Not `PlatformOwner`. |
+
+---
+
+## Admin Audit Log
+
+Separate from the user-facing `GET /api/v1/audit`. Tracks admin actions (create/update/delete on entities) with before/after state capture. Requires `PlatformOwner`.
+
+---
+
+### GET /api/v1/admin/audit-log
+
+Returns a paginated list of admin audit log entries.
+
+**Auth required**: Yes — `PlatformOwner`
+
+#### Query Parameters
+
+| Param | Type | Default | Notes |
+|---|---|---|---|
+| `page` | integer | `1` | — |
+| `pageSize` | integer | `50` | — |
+| `action` | string | — | Filter by action name (e.g. `user.created`, `role.deleted`). |
+| `targetType` | string | — | Filter by entity type (e.g. `User`, `Role`, `App`). |
+| `actorId` | UUID | — | Filter by the admin user who performed the action. |
+| `from` | datetime | — | ISO 8601 inclusive lower bound on `created_at`. |
+| `to` | datetime | — | ISO 8601 inclusive upper bound on `created_at`. |
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "a1b2c3d4-0000-0000-0000-000000000001",
+      "actorEmail": "admin@flatplanet.com",
+      "action": "user.created",
+      "targetType": "User",
+      "targetId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+      "createdAt": "2026-04-17T09:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
+### GET /api/v1/admin/audit-log/{id}
+
+Returns a single admin audit log entry with full before/after state.
+
+**Auth required**: Yes — `PlatformOwner`
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "a1b2c3d4-0000-0000-0000-000000000001",
+    "actorEmail": "admin@flatplanet.com",
+    "action": "user.created",
+    "targetType": "User",
+    "targetId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+    "createdAt": "2026-04-17T09:00:00Z",
+    "beforeState": null,
+    "afterState": "{\"email\":\"alice@acme.com\",\"fullName\":\"Alice Chen\"}",
+    "ipAddress": "203.0.113.1"
+  }
+}
+```
+
+| Field | Notes |
+|---|---|
+| `beforeState` | JSON string of entity state before the action. `null` for create operations. |
+| `afterState` | JSON string of entity state after the action. `null` for delete operations. |
+| `ipAddress` | IP address of the admin who performed the action. |
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `404` | Audit log entry not found. | No entry with that ID. |
+
+---
+
 ## Audit Log
 
 ---
@@ -1952,6 +2272,9 @@ GET /api/v1/access-review?companyId=7c9e6679-7425-40de-944b-e07fc1f90ae7&page=1&
 | `user_anonymized` | User PII anonymized (GDPR) |
 | `company_suspended` | Company suspended (all users suspended, tokens revoked) |
 | `company_deactivated` | Company set to inactive (all users + app roles deactivated) |
+| `mfa_enrolled` | User enrolled a phone number and verified OTP |
+| `mfa_login_verified` | User passed MFA challenge at login |
+| `identity_verification_completed` | User reached `fullyVerified = true` for the first time |
 
 ---
 
@@ -1973,10 +2296,12 @@ GET /api/v1/access-review?companyId=7c9e6679-7425-40de-944b-e07fc1f90ae7&page=1&
 
 ### Versioning
 
-The current API version is `v1`, reflected in all endpoint paths (`/api/v1/...`). The current platform release is **1.2.1**.
+The current API version is `v1`, reflected in all endpoint paths (`/api/v1/...`). The current platform release is **1.3.0**.
 
 | Version | Date | Summary |
 |---|---|---|
+| `1.6.0` | 2026-04-17 | Phase 1 additions: MFA endpoints (enroll, OTP verify, login-verify), identity verification endpoints, admin audit log endpoints. Rate limits documented for change-password (5/15min), forgot-password (3/15min), authorize (60/min). 503 error code added. `requiresMfa` and `challengeId` login response fields. `X-Service-Name` header. AuthZ cache behaviour noted. |
+| `1.5.0` | 2026-04-10 | ISO 27001 features: session enforcement, access review, compliance export, company members. |
 | `1.2.1` | 2026-03-27 | Validation errors now return platform envelope `{ success, message, errors }`. ServiceToken auth handler registered. Seed data simplified to Development Hub only. |
 | `1.2.0` | 2026-03-27 | Controller refactor (`ApiController` base). Service Token auth documented. Permission `category` field. `UserContextResponse` full shape. `UserAccessResponse` with `userFullName`. Resource status values corrected. Compliance export shape documented. |
 | `1.1.0` | 2026-03-25 | Standalone bcrypt authentication. Added `POST /api/v1/users`. Removed Supabase Auth dependency. |
