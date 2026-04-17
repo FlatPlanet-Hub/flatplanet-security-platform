@@ -17,6 +17,13 @@ public interface IMfaService
     Task<MfaChallenge> SendEmailOtpAsync(Guid userId, string? ipAddress);
     Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent);
 
+    // Backup codes (TOTP recovery)
+    Task<GenerateBackupCodesResponse> GenerateBackupCodesAsync(Guid userId);
+    Task<LoginResponse> VerifyBackupCodeAsync(Guid userId, string backupCode, string? ipAddress, string? userAgent);
+
+    // Status
+    Task<UserMfaStatusResponse> GetMfaStatusAsync(Guid userId);
+
     // Admin
     Task DisableMfaAsync(Guid userId);
     Task ResetMfaAsync(Guid userId);

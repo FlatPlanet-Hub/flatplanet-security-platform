@@ -14,6 +14,16 @@ public class MfaController : ApiController
 
     public MfaController(IMfaService mfa) => _mfa = mfa;
 
+    // ── Status ───────────────────────────────────────────────────────────────
+
+    [HttpGet("status")]
+    [Authorize]
+    public async Task<IActionResult> GetStatus()
+    {
+        var result = await _mfa.GetMfaStatusAsync(GetUserId());
+        return OkData(result);
+    }
+
     // ── TOTP Enrolment ───────────────────────────────────────────────────────
 
     [HttpPost("totp/begin-enrol")]
@@ -58,6 +68,27 @@ public class MfaController : ApiController
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
         var userAgent = Request.Headers.UserAgent.ToString();
         var result = await _mfa.VerifyLoginEmailOtpAsync(request.ChallengeId, request.OtpCode, ipAddress, userAgent);
+        return OkData(result);
+    }
+
+    // ── Backup Codes ─────────────────────────────────────────────────────────
+
+    [HttpPost("backup-codes/generate")]
+    [Authorize]
+    public async Task<IActionResult> GenerateBackupCodes()
+    {
+        var result = await _mfa.GenerateBackupCodesAsync(GetUserId());
+        return OkData(result);
+    }
+
+    [HttpPost("backup-code/login-verify")]
+    [AllowAnonymous]
+    [EnableRateLimiting("mfa-verify")]
+    public async Task<IActionResult> VerifyBackupCode([FromBody] VerifyBackupCodeRequest request)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers.UserAgent.ToString();
+        var result = await _mfa.VerifyBackupCodeAsync(request.UserId, request.BackupCode, ipAddress, userAgent);
         return OkData(result);
     }
 }

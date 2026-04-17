@@ -189,6 +189,7 @@ builder.Services.AddScoped<IPermissionRepository, PermissionRepository>();
 builder.Services.AddScoped<IBusinessMembershipRepository, BusinessMembershipRepository>();
 builder.Services.AddScoped<IPasswordResetTokenRepository, PasswordResetTokenRepository>();
 builder.Services.AddScoped<IMfaChallengeRepository, MfaChallengeRepository>();
+builder.Services.AddScoped<IMfaBackupCodeRepository, MfaBackupCodeRepository>();
 builder.Services.AddScoped<IIdentityVerificationRepository, IdentityVerificationRepository>();
 
 // Services
