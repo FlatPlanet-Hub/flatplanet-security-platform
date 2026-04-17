@@ -26,4 +26,9 @@ public static class AuditEventType
     public const string PasswordChanged = "password_changed";
     public const string PasswordResetRequested = "password_reset_requested";
     public const string PasswordResetCompleted = "password_reset_completed";
+    public const string MfaOtpIssued = "mfa_otp_issued";
+    public const string MfaVerified = "mfa_verified";
+    public const string MfaFailed = "mfa_failed";
+    public const string MfaLoginVerified = "mfa_login_verified";
+    public const string IdentityVerificationCompleted = "identity_verification_completed";
 }

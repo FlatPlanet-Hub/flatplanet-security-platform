@@ -87,6 +87,14 @@ public class SessionRepository : ISessionRepository
             new { Reason = reason, UserId = userId });
     }
 
+    public async Task EndAllActiveSessionsByUserAsync(Guid userId, string reason, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            "UPDATE sessions SET is_active = false, ended_reason = @Reason WHERE user_id = @UserId AND is_active = true",
+            new { Reason = reason, UserId = userId },
+            transaction: tx);
+    }
+
     public async Task UpdateLastActiveAtAsync(Guid sessionId, DateTime lastActiveAt)
     {
         using var conn = await _db.CreateConnectionAsync();
@@ -95,11 +103,51 @@ public class SessionRepository : ISessionRepository
             new { LastActiveAt = lastActiveAt, Id = sessionId });
     }
 
+    public async Task<IEnumerable<Guid>> GetActiveSessionIdsByUserAsync(Guid userId)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        return await conn.QueryAsync<Guid>(
+            "SELECT id FROM sessions WHERE user_id = @UserId AND is_active = true",
+            new { UserId = userId });
+    }
+
     public async Task<IEnumerable<Session>> GetAllByUserIdAsync(Guid userId)
     {
         using var conn = await _db.CreateConnectionAsync();
         return await conn.QueryAsync<Session>(
             "SELECT * FROM sessions WHERE user_id = @UserId ORDER BY started_at DESC",
             new { UserId = userId });
+    }
+
+    public async Task EvictOldestIfOverLimitAsync(Guid userId, int maxSessions, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            """
+            WITH to_evict AS (
+                SELECT id FROM sessions
+                WHERE user_id = @UserId AND is_active = true
+                ORDER BY last_active_at ASC
+                LIMIT GREATEST(0,
+                    (SELECT COUNT(*) FROM sessions WHERE user_id = @UserId AND is_active = true)
+                    - @MaxSessions + 1
+                )
+            )
+            UPDATE sessions
+            SET is_active = false, ended_reason = 'replaced'
+            WHERE id IN (SELECT id FROM to_evict)
+            """,
+            new { UserId = userId, MaxSessions = maxSessions },
+            transaction: tx);
+    }
+
+    public async Task EndAllActiveSessionsByCompanyIdAsync(Guid companyId, string reason, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            """
+            UPDATE sessions SET is_active = false, ended_reason = @Reason
+            WHERE user_id IN (SELECT id FROM users WHERE company_id = @CompanyId) AND is_active = true
+            """,
+            new { Reason = reason, CompanyId = companyId },
+            transaction: tx);
     }
 }

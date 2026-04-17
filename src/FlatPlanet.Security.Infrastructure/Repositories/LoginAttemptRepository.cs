@@ -54,4 +54,12 @@ public class LoginAttemptRepository : ILoginAttemptRepository
             """,
             new { IpAddress = ipAddress, Since = since });
     }
+
+    public async Task DeleteOlderThanAsync(int retentionDays)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "DELETE FROM login_attempts WHERE attempted_at < NOW() - (@Days || ' days')::INTERVAL",
+            new { Days = retentionDays });
+    }
 }

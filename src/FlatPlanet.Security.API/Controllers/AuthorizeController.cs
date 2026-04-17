@@ -2,6 +2,7 @@ using FlatPlanet.Security.Application.DTOs.Authorization;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 
 namespace FlatPlanet.Security.API.Controllers;
 
@@ -17,6 +18,7 @@ public class AuthorizeController : ApiController
         _authorizationService = authorizationService;
     }
 
+    [EnableRateLimiting("authorize")]
     [HttpPost("authorize")]
     public async Task<IActionResult> Authorize([FromBody] AuthorizeRequest request)
     {

@@ -1,6 +1,8 @@
+using FlatPlanet.Security.Application.Common.Exceptions;
 using FlatPlanet.Security.Application.DTOs.Authorization;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace FlatPlanet.Security.Application.Services;
 
@@ -12,6 +14,7 @@ public class UserContextService : IUserContextService
     private readonly IRolePermissionRepository _rolePermissions;
     private readonly IAppRepository _apps;
     private readonly ICompanyRepository _companies;
+    private readonly IMemoryCache _cache;
 
     public UserContextService(
         IUserRepository users,
@@ -19,7 +22,8 @@ public class UserContextService : IUserContextService
         IRoleRepository roles,
         IRolePermissionRepository rolePermissions,
         IAppRepository apps,
-        ICompanyRepository companies)
+        ICompanyRepository companies,
+        IMemoryCache cache)
     {
         _users = users;
         _userAppRoles = userAppRoles;
@@ -27,10 +31,15 @@ public class UserContextService : IUserContextService
         _rolePermissions = rolePermissions;
         _apps = apps;
         _companies = companies;
+        _cache = cache;
     }
 
     public async Task<UserContextResponse> GetUserContextAsync(Guid userId, string appSlug)
     {
+        var cacheKey = $"fp:sec:ctx:{userId}:{appSlug}";
+        if (_cache.TryGetValue(cacheKey, out UserContextResponse? cached) && cached is not null)
+            return cached;
+
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
 
@@ -49,13 +58,13 @@ public class UserContextService : IUserContextService
             .Select(r => r.RoleId)
             .ToList();
 
-        var appRoleNames = appRoleIds.Any()
-            ? await _roles.GetNamesByIdsAsync(appRoleIds)
-            : Enumerable.Empty<string>();
+        if (!appRoleIds.Any())
+            throw new ForbiddenException($"User does not have access to application '{appSlug}'.");
 
-        var permissions = appRoleIds.Any()
-            ? (await _rolePermissions.GetPermissionsByRoleIdsAsync(appRoleIds)).Select(p => p.Name).Distinct().ToList()
-            : new List<string>();
+        var appRoleNames = await _roles.GetNamesByIdsAsync(appRoleIds);
+
+        var permissions = (await _rolePermissions.GetPermissionsByRoleIdsAsync(appRoleIds))
+            .Select(p => p.Name).Distinct().ToList();
 
         // Allowed apps = all apps the user has active roles in
         var allowedAppIds = allUserRoles.Select(r => r.AppId).Distinct().ToList();
@@ -63,7 +72,7 @@ public class UserContextService : IUserContextService
             .Select(a => new AllowedAppDto { AppId = a.Id, AppSlug = a.Slug, AppName = a.Name })
             .ToList();
 
-        return new UserContextResponse
+        var result = new UserContextResponse
         {
             UserId = user.Id,
             Email = user.Email,
@@ -73,5 +82,12 @@ public class UserContextService : IUserContextService
             Permissions = permissions,
             AllowedApps = allowedApps
         };
+
+        _cache.Set(cacheKey, result, new MemoryCacheEntryOptions
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(2)
+        });
+
+        return result;
     }
 }

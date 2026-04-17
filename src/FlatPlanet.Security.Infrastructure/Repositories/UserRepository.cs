@@ -112,12 +112,36 @@ public class UserRepository : IUserRepository
             new { Status = status, Id = userId });
     }
 
+    public async Task UpdateStatusAsync(Guid userId, string status, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            "UPDATE users SET status = @Status WHERE id = @Id",
+            new { Status = status, Id = userId },
+            transaction: tx);
+    }
+
     public async Task SuspendByCompanyIdAsync(Guid companyId)
     {
         using var conn = await _db.CreateConnectionAsync();
         await conn.ExecuteAsync(
             "UPDATE users SET status = 'suspended' WHERE company_id = @CompanyId AND status = 'active'",
             new { CompanyId = companyId });
+    }
+
+    public async Task SuspendByCompanyIdAsync(Guid companyId, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            "UPDATE users SET status = 'suspended' WHERE company_id = @CompanyId AND status = 'active'",
+            new { CompanyId = companyId },
+            transaction: tx);
+    }
+
+    public async Task DeactivateAllByCompanyIdAsync(Guid companyId, IDbConnection conn, IDbTransaction tx)
+    {
+        await conn.ExecuteAsync(
+            "UPDATE users SET status = 'inactive' WHERE company_id = @CompanyId AND status = 'active'",
+            new { CompanyId = companyId },
+            transaction: tx);
     }
 
     public async Task<User> CreateAsync(User user)
@@ -145,5 +169,21 @@ public class UserRepository : IUserRepository
             "UPDATE users SET password_hash = @password_hash WHERE id = @id::uuid",
             new { password_hash = passwordHash, id = userId },
             transaction: tx);
+    }
+
+    public async Task UpdatePhoneNumberAsync(Guid userId, string phoneNumber)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET phone_number = @PhoneNumber WHERE id = @Id",
+            new { PhoneNumber = phoneNumber, Id = userId });
+    }
+
+    public async Task UpdateMfaEnabledAsync(Guid userId, bool enabled)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET mfa_enabled = @Enabled WHERE id = @Id",
+            new { Enabled = enabled, Id = userId });
     }
 }
