@@ -554,6 +554,7 @@ Initiates a password reset flow by sending a time-limited reset link to the user
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `email` | string | Yes | The email address to send the reset link to. Must be a valid email format. |
+| `appSlug` | string | No | App slug used to resolve the reset link URL. When provided, the app's registered `BaseUrl` is used. When omitted, the platform's configured `App.BaseUrl` is used as fallback. Max 100 chars. |
 
 #### Success Response — 200
 
