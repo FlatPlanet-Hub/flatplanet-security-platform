@@ -59,6 +59,24 @@ public class MfaController : ApiController
         return OkData(result);
     }
 
+    [HttpPost("totp/request-email-fallback")]
+    [AllowAnonymous]
+    [EnableRateLimiting("mfa-verify")]
+    public async Task<IActionResult> RequestTotpEmailFallback([FromBody] RequestTotpFallbackRequest request)
+    {
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        try
+        {
+            var result = await _mfa.RequestTotpFallbackAsync(request.UserId, ipAddress);
+            return OkData(new { challengeId = result.Id });
+        }
+        catch (KeyNotFoundException)
+        {
+            // Safe generic response — never reveal whether userId exists or has totp enabled
+            return OkData(new { challengeId = Guid.NewGuid() });
+        }
+    }
+
     // ── Email OTP ────────────────────────────────────────────────────────────
 
     [HttpPost("email-otp/resend")]
@@ -67,8 +85,16 @@ public class MfaController : ApiController
     public async Task<IActionResult> ResendEmailOtp([FromBody] ResendEmailOtpRequest request)
     {
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
-        var result = await _mfa.ResendEmailOtpAsync(request.UserId, ipAddress);
-        return OkData(new { challengeId = result.Id });
+        try
+        {
+            var result = await _mfa.ResendEmailOtpAsync(request.UserId, ipAddress);
+            return OkData(new { challengeId = result.Id });
+        }
+        catch (KeyNotFoundException)
+        {
+            // Safe generic response — never reveal whether userId exists or has email_otp enabled
+            return OkData(new { challengeId = Guid.NewGuid() });
+        }
     }
 
     [HttpPost("email-otp/login-verify")]

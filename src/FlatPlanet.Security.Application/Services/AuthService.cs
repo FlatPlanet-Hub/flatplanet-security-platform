@@ -483,6 +483,51 @@ public class AuthService : IAuthService
         }
     }
 
+    public async Task AdminForceResetPasswordAsync(Guid userId, string appSlug, Guid performedByUserId)
+    {
+        var user = await _users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        var app = await _apps.GetBySlugAsync(appSlug)
+            ?? throw new ArgumentException($"App '{appSlug}' not found.");
+
+        var plain = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(plain))).ToLowerInvariant();
+
+        await _resetTokens.InvalidatePendingByUserAsync(user.Id);
+        await _resetTokens.CreateAsync(new PasswordResetToken
+        {
+            UserId    = user.Id,
+            TokenHash = hash,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(15)
+        });
+
+        var link = $"{app.BaseUrl.TrimEnd('/')}/reset-password?token={plain}";
+
+        try
+        {
+            await _emailService.SendPasswordResetEmailAsync(user.Email, link);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Admin force-reset: failed to send password reset email to {Email}", user.Email);
+        }
+
+        try
+        {
+            await _auditLog.LogAsync(new AuthAuditLog
+            {
+                UserId    = user.Id,
+                EventType = AuditEventType.PasswordResetForcedByAdmin,
+                Details   = JsonSerializer.Serialize(new { performed_by = performedByUserId })
+            });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Audit log failed for PasswordResetForcedByAdmin user {UserId}", user.Id);
+        }
+    }
+
     public async Task ResetPasswordAsync(ResetPasswordRequest request, string? ipAddress)
     {
         // Validate inputs FIRST — before any DB call
