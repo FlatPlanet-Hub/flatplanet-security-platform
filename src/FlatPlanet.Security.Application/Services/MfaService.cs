@@ -295,7 +295,20 @@ public class MfaService : IMfaService
         if (!user.MfaEnabled || user.MfaMethod != "totp")
             throw new KeyNotFoundException("User not found.");
 
-        return await SendEmailOtpAsync(userId, ipAddress);
+        var challenge = await SendEmailOtpAsync(userId, ipAddress);
+
+        // Audit the fallback separately so it is distinguishable from a normal email_otp login.
+        // Without this, a TOTP user's audit trail shows only "email_otp issued" with no indication
+        // that the user bypassed their authenticator — making anomaly detection impossible.
+        await _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId    = userId,
+            EventType = AuditEventType.MfaTotpFallbackRequested,
+            IpAddress = ipAddress,
+            Details   = JsonSerializer.Serialize(new { challenge_id = challenge.Id })
+        });
+
+        return challenge;
     }
 
     public async Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent)
