@@ -60,6 +60,38 @@ public class JwtService : IJwtService
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
+    public async Task<string> IssueEnrolmentTokenAsync(User user, Guid sessionId)
+    {
+        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.SecretKey));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
+
+        var claims = new List<Claim>
+        {
+            new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
+            new Claim(JwtRegisteredClaimNames.Email, user.Email),
+            new Claim("full_name", user.FullName),
+            new Claim("company_id", user.CompanyId.ToString()),
+            new Claim("session_id", sessionId.ToString()),
+            new Claim("enrolment_only", "true"),
+            new Claim(JwtRegisteredClaimNames.Iat,
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
+                ClaimValueTypes.Integer64)
+        };
+
+        // No roles, no business memberships — user has not yet proven MFA
+        var token = new JwtSecurityToken(
+            issuer: _options.Issuer,
+            audience: _options.Audience,
+            claims: claims,
+            expires: DateTime.UtcNow.AddMinutes(10),
+            signingCredentials: credentials
+        );
+
+        // Suppress CS1998 — kept async to match the interface signature
+        await Task.CompletedTask;
+        return new JwtSecurityTokenHandler().WriteToken(token);
+    }
+
     public (string token, string hash) GenerateRefreshToken()
     {
         var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(64));

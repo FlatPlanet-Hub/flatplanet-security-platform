@@ -142,8 +142,51 @@ public class AuthService : IAuthService
         if (user.MfaEnabled)
         {
             // U1 fix: only gate on TOTP if the method is 'totp' — email_otp users always have MfaTotpEnrolled=false
+            // Issue a short-lived enrolment-only token so the user can reach begin-enrol / verify-enrol.
+            // No refresh token — this session exists only to complete enrollment (10-min absolute timeout).
             if (user.MfaMethod == "totp" && !user.MfaTotpEnrolled)
-                return new LoginResponse { RequiresMfa = true, MfaEnrolmentPending = true, MfaMethod = "totp" };
+            {
+                Session enrolSession;
+                using (var conn = await _db.CreateConnectionAsync())
+                using (var tx = conn.BeginTransaction())
+                {
+                    try
+                    {
+                        await _sessions.EvictOldestIfOverLimitAsync(user.Id, Cfg("max_concurrent_sessions", 3), conn, tx);
+                        enrolSession = await _sessions.CreateAsync(new Session
+                        {
+                            UserId          = user.Id,
+                            IpAddress       = ipAddress,
+                            UserAgent       = userAgent,
+                            ExpiresAt       = now.AddMinutes(10),
+                            IdleTimeoutMinutes = 10
+                        }, conn, tx);
+                        tx.Commit();
+                    }
+                    catch
+                    {
+                        tx.Rollback();
+                        throw;
+                    }
+                }
+
+                var enrolToken = await _jwt.IssueEnrolmentTokenAsync(user, enrolSession.Id);
+                return new LoginResponse
+                {
+                    RequiresMfa        = true,
+                    MfaEnrolmentPending = true,
+                    MfaMethod          = "totp",
+                    AccessToken        = enrolToken,
+                    ExpiresIn          = 600,
+                    User               = new UserProfileDto
+                    {
+                        UserId    = user.Id,
+                        Email     = user.Email,
+                        FullName  = user.FullName,
+                        CompanyId = user.CompanyId.ToString()
+                    }
+                };
+            }
 
             if (user.MfaMethod == "totp")
                 return new LoginResponse { RequiresMfa = true, MfaMethod = "totp", User = new UserProfileDto { UserId = user.Id } };
