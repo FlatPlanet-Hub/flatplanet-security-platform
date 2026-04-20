@@ -264,7 +264,107 @@ Both docs fully updated:
 
 ### Open Items
 
-- [ ] GAP-TEST-1: DB-level OTP lockout (`TooManyRequestsException`) still untested — rate limiter fires first at same limit of 5. Test from a fresh IP with requests spread over >1 minute.
-- [ ] Memory files: `project_context.md`, `role_tester.md`, `role_techwriter.md` need updating with session results.
+- [x] GAP-TEST-1: DB-level OTP lockout — ✅ CONFIRMED (see session 2026-04-20)
+- [x] Memory files updated (see session 2026-04-20)
+
+---
+
+## Session: Gap Analysis Resolution, Forgot-Password SSO Refactor & Docs Update
+
+**Date**: 2026-04-20
+**Branch at start**: `main`
+**All work pushed directly to `main`** (service already on main, CD active)
+
+---
+
+### What Was Done
+
+#### 1. Frontend gap analysis — all 18 gaps confirmed as frontend-only
+
+Reviewed `docs/gap-analysis-mfa-password.md` (18 gaps). Every gap was a frontend implementation problem — the backend was already complete. No backend changes required.
+
+Drafted and delivered a message for the frontend team summarizing all 18 gaps grouped by priority (P1/P2/P3).
+
+#### 2. GAP-TEST-1 confirmed — DB-level OTP lockout ✅
+
+Tested `TooManyRequestsException` at the DB level (distinct from rate limiter 429).
+
+- Set Erick's MFA to `email_otp` via `POST /api/v1/admin/mfa/{userId}/set-method`
+- Logged in to trigger a real challenge (not a decoy `Guid.NewGuid()`)
+- Submitted 5 wrong OTP codes spread across two 60-second rate-limit windows (to bypass the 5/min rate limit before hitting the DB lockout)
+- 6th attempt returned HTTP 429: `"Maximum OTP attempts exceeded."` ← DB-level lockout confirmed
+
+Key finding: the rate limiter and DB lockout share the same default threshold (5). To hit the DB lockout first you must spread requests over >1 minute so the rate limit windows reset.
+
+#### 3. Fixed `POST /api/v1/auth/forgot-password` returning 400
+
+**Root cause**: `ForgotPasswordRequest.AppSlug` was `[Required]`, but the frontend (correctly) only sends `email` — SP is a pure SSO, not per-app.
+
+**Fix**: Full SSO refactor — removed `appSlug` entirely from both `forgot-password` and `force-reset-password`.
+
+Files changed:
+- `ForgotPasswordRequest.cs` — `AppSlug` removed; only `Email` remains
+- `AdminForceResetPasswordRequest.cs` — emptied (no body needed)
+- `IAuthService.cs` — `AdminForceResetPasswordAsync` signature: `appSlug` param removed
+- `AuthService.cs` — added `IOptions<AppOptions>` injection; both methods now use `_appOptions.BaseUrl.TrimEnd('/')` directly. DB app lookup removed. Comment: "SSO: reset link always uses the platform's configured base URL."
+- `AdminUserController.cs` — `ForceResetPassword` action: no `[FromBody]` parameter at all
+- `AuthServiceTests.cs` — `CreateService()` updated to pass `Options.Create(new AppOptions { BaseUrl = "https://localhost:3000" })`
+
+#### 4. Fixed `App.BaseUrl` pointing to wrong app
+
+`appsettings.json` had `App.BaseUrl = "https://fp-mayari.netlify.app"`. Mayari is a separate project — the correct central frontend is `https://fpdevelopmenthub.netlify.app`.
+
+Updated `App.BaseUrl` → `https://fpdevelopmenthub.netlify.app`.
+
+> Note: This URL will move to the FlatPlanet auth portal URL once that is built. `App.BaseUrl` is the single source of truth for all reset links.
+
+#### 5. Documented two new features (GAP-6 closure)
+
+**`docs/security-api-reference.md`** updated:
+- Added `PATCH /api/v1/auth/me` section: fields (`fullName` optional 1-150, `email` optional max 254), `requiresReLogin: true` on email change, rate limit 10/15min, errors 400/401/409/429
+- Added `mfaEnrolmentPending: true` login response path with enrollment-only token restrictions
+- Added `profile_name_updated` / `profile_email_updated` audit events
+- `appSlug` removed from forgot-password fields; `force-reset-password` body removed; `App not found` error row removed
+
+**`docs/frontend-integration-guide.md`** updated:
+- What's New rows 13 (PATCH /auth/me) and 14 (mfaEnrolmentPending)
+- Step 13 — Update Profile section added
+- Login step 1 updated with `mfaEnrolmentPending` response example and defensive fallback note
+- `force-reset-password` updated: no body, note about central reset URL
+
+**`README.md`** fully rewritten:
+- Stack table updated (added MailKit, MFA)
+- Config section updated: `App.BaseUrl` with SSO explanation, `Mfa.TotpEncryptionKey`
+- Authentication section rewritten: SSO framing, MFA table (TOTP + email OTP), enrollment token, PATCH /auth/me
+- New Admin MFA Management section with endpoint table
+- Updated docs links
+
+---
+
+### Commits (all on `main`)
+
+| Commit | Message |
+|---|---|
+| `5167a77` | `refactor: remove appSlug from password reset flows — SSO always uses AppOptions.BaseUrl` |
+| README commit | `docs: rewrite README — SSO framing, MFA section, App.BaseUrl explanation, PATCH /auth/me` |
+
+---
+
+### Decisions Made
+
+| Decision | Rationale |
+|---|---|
+| Remove `appSlug` entirely from reset flows | SP is a pure SSO — one central reset URL, no per-app routing |
+| `App.BaseUrl` = `fpdevelopmenthub.netlify.app` | Mayari is a separate project; Dev Hub is the correct central frontend until an auth portal is built |
+| No rate-limiter threshold change for GAP-TEST-1 | Rate limiter and DB lockout at same limit (5) is intentional — spreading over >1 min still reaches DB lockout |
+
+---
+
+### Open Items
+
+- [ ] BUG-01 (P2) — Polly 500 bug: login with `email_otp` returns 500 instead of 503 when SMTP fails. Fix: catch Polly exception type in ExceptionHandlingMiddleware or SmtpEmailService.
+- [ ] Configure SMTP in Azure App Service (env vars: `Smtp__Host/Port/Username/Password/FromEmail`) — unblocks email OTP tests (G1/G4b/G5/resend)
+- [ ] Yuffie re-runs blocked tests after SMTP configured
+- [ ] Auth portal URL — update `App.BaseUrl` when portal is built
 
 ---
