@@ -9,7 +9,6 @@ public class ForgotPasswordRequest
     [MaxLength(256)]
     public string Email { get; set; } = string.Empty;
 
-    [Required]
     [MaxLength(100)]
-    public string AppSlug { get; set; } = string.Empty;
+    public string? AppSlug { get; set; }
 }

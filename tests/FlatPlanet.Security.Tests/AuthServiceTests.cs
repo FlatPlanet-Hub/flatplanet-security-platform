@@ -42,7 +42,11 @@ public class AuthServiceTests
         _loginAttempts.Object, _auditLog.Object, _securityConfig.Object,
         _roles.Object, _db.Object, _companies.Object, _userContext.Object,
         _resetTokens.Object, _emailService.Object, _apps.Object, _mfa.Object,
-        _cache, _logger.Object);
+        _cache, _logger.Object,
+        Options.Create(new FlatPlanet.Security.Application.Common.Options.AppOptions
+        {
+            BaseUrl = "https://localhost:3000"
+        }));
 
     private void SetupDefaultConfig()
     {

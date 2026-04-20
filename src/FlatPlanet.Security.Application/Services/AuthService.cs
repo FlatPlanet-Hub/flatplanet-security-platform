@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FlatPlanet.Security.Application.Common.Exceptions;
 using FlatPlanet.Security.Application.Common.Helpers;
+using FlatPlanet.Security.Application.Common.Options;
 using FlatPlanet.Security.Application.DTOs.Auth;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
@@ -9,6 +10,7 @@ using FlatPlanet.Security.Domain.Entities;
 using FlatPlanet.Security.Domain.Enums;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace FlatPlanet.Security.Application.Services;
 
@@ -32,6 +34,7 @@ public class AuthService : IAuthService
     private readonly IMfaService _mfa;
     private readonly IMemoryCache _cache;
     private readonly ILogger<AuthService> _logger;
+    private readonly AppOptions _appOptions;
 
     public AuthService(
         IPasswordHasher passwordHasher,
@@ -51,7 +54,8 @@ public class AuthService : IAuthService
         IAppRepository apps,
         IMfaService mfa,
         IMemoryCache cache,
-        ILogger<AuthService> logger)
+        ILogger<AuthService> logger,
+        IOptions<AppOptions> appOptions)
     {
         _passwordHasher = passwordHasher;
         _jwt = jwt;
@@ -71,6 +75,7 @@ public class AuthService : IAuthService
         _mfa = mfa;
         _cache = cache;
         _logger = logger;
+        _appOptions = appOptions.Value;
     }
 
     public async Task<LoginResponse> LoginAsync(LoginRequest request, string? ipAddress, string? userAgent)
@@ -556,9 +561,27 @@ public class AuthService : IAuthService
         if (user is null)
             return;
 
-        var app = await _apps.GetBySlugAsync(request.AppSlug);
-        if (app is null)
+        // Resolve the base URL for the reset link.
+        // If appSlug is provided, look up the app's registered base URL.
+        // Fall back to AppOptions.BaseUrl so callers that don't know the app slug still work.
+        string baseUrl;
+        if (!string.IsNullOrWhiteSpace(request.AppSlug))
+        {
+            var app = await _apps.GetBySlugAsync(request.AppSlug);
+            if (app is null)
+                return;
+            baseUrl = app.BaseUrl.TrimEnd('/');
+        }
+        else
+        {
+            baseUrl = _appOptions.BaseUrl.TrimEnd('/');
+        }
+
+        if (string.IsNullOrWhiteSpace(baseUrl))
+        {
+            _logger.LogWarning("ForgotPasswordAsync: no base URL configured — reset link cannot be built.");
             return;
+        }
 
         try
         {
@@ -573,7 +596,7 @@ public class AuthService : IAuthService
                 ExpiresAt = DateTime.UtcNow.AddMinutes(15)
             });
 
-            var link = $"{app.BaseUrl.TrimEnd('/')}/reset-password?token={plain}";
+            var link = $"{baseUrl}/reset-password?token={plain}";
 
             try
             {
