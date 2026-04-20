@@ -1,6 +1,6 @@
 # FlatPlanet Security Platform — API Reference
 
-**Version**: 1.6.0
+**Version**: 1.7.0
 **Base URL**: `https://<your-host>/api/v1`
 **Content-Type**: `application/json`
 **Auth**: Bearer JWT or Service Token in `Authorization` header
@@ -1798,29 +1798,15 @@ GET /api/v1/apps/dashboard-hub/user-context
 
 ## MFA
 
-SMS-based OTP for identity verification and MFA-gated login. Phase 2 will replace SMS with TOTP (Microsoft Authenticator compatible) — these endpoints are current for Phase 1.
+TOTP-based MFA (Microsoft Authenticator, Google Authenticator) with email OTP fallback. Login triggers the challenge automatically — the endpoints below cover enrollment, login verification, fallback, backup codes, and admin management.
 
 ---
 
-### POST /api/v1/mfa/enroll
+### GET /api/v1/mfa/status
 
-Enrolls a phone number and sends a 6-digit OTP via SMS. The user must verify the code via `POST /api/v1/mfa/otp/verify` to complete enrollment and enable MFA on their account.
+Returns MFA status for the authenticated user.
 
 **Auth required**: Yes (Bearer JWT)
-
-#### Request
-
-```json
-{
-  "phoneNumber": "+639171234567"
-}
-```
-
-#### Fields
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `phoneNumber` | string | Yes | Must be a valid phone number (E.164 format recommended). |
 
 #### Success Response — 200
 
@@ -1828,87 +1814,111 @@ Enrolls a phone number and sends a 6-digit OTP via SMS. The user must verify the
 {
   "success": true,
   "data": {
-    "maskedPhone": "+63917***4567",
-    "expiresAt": "2026-04-17T10:15:00Z"
+    "mfaEnabled": true,
+    "mfaMethod": "totp",
+    "mfaTotpEnrolled": true,
+    "backupCodesRemaining": 6
   }
 }
 ```
 
 | Field | Notes |
 |---|---|
-| `maskedPhone` | Partially masked for confirmation display. |
-| `expiresAt` | UTC timestamp when the OTP expires (5 minutes from issue). |
-
-#### Error Responses
-
-| HTTP | Message | Cause |
-|---|---|---|
-| `400` | *(validation message)* | Missing or invalid `phoneNumber`. |
-| `401` | — | Missing or invalid JWT. |
-| `503` | SMS service is temporarily unavailable. Please try again. | SMS delivery failed after Polly retry (3 attempts, exponential backoff). |
+| `mfaEnabled` | `true` if the user has MFA active on their account. |
+| `mfaMethod` | `"email_otp"` or `"totp"`. `null` if MFA not enabled. |
+| `mfaTotpEnrolled` | `true` if TOTP is fully enrolled via authenticator app. |
+| `backupCodesRemaining` | Number of unused backup codes remaining. |
 
 ---
 
-### POST /api/v1/mfa/otp/verify
+### POST /api/v1/mfa/totp/begin-enrol
 
-Verifies the OTP sent during enrollment. On success, MFA is enabled on the user's account and identity verification status is synced.
+Starts TOTP enrollment. Returns a `otpauth://` URI that the user scans in their authenticator app (Microsoft Authenticator, Google Authenticator, etc.).
 
 **Auth required**: Yes (Bearer JWT)
+**Rate limit**: `mfa-verify` — 5 requests per minute per IP
 
 #### Request
 
-```json
-{
-  "code": "483921"
-}
-```
-
-#### Fields
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `code` | string | Yes | 4–8 character OTP code from the SMS. |
+No body required.
 
 #### Success Response — 200
 
 ```json
 {
   "success": true,
-  "data": { "message": "MFA enrollment verified. MFA is now enabled on your account." }
+  "data": {
+    "qrCodeUri": "otpauth://totp/FlatPlanet%20Security%20Platform:alice@acme.com?secret=BASE32SECRET&issuer=FlatPlanet%20Security%20Platform"
+  }
 }
 ```
+
+| Field | Notes |
+|---|---|
+| `qrCodeUri` | `otpauth://` URI. Render as a QR code for the user to scan. Also expose the raw URI for manual entry. |
 
 #### Error Responses
 
 | HTTP | Message | Cause |
 |---|---|---|
-| `400` | *(validation message)* | Missing or out-of-range `code`. |
+| `400` | *(validation message)* | User already enrolled. |
 | `401` | — | Missing or invalid JWT. |
-| `422` | Invalid or expired OTP. | Code is wrong, expired, or already used. |
 
 ---
 
-### POST /api/v1/mfa/otp/login-verify
+### POST /api/v1/mfa/totp/verify-enrol
 
-Completes an MFA-gated login. Called after a login response returns `requiresMfa: true`. Issues tokens on success.
+Verifies the first code from the authenticator app to complete TOTP enrollment. On success, MFA is enabled and a full `LoginResponse` with tokens is returned — the user is logged in immediately.
 
-**Auth required**: No (anonymous)
+**Auth required**: Yes (Bearer JWT)
+**Rate limit**: `mfa-verify` — 5 requests per minute per IP
 
 #### Request
 
 ```json
 {
-  "challengeId": "b3d4e5f6-0000-0000-0000-000000000001",
-  "code": "483921"
+  "totpCode": "483921"
 }
 ```
 
-#### Fields
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `totpCode` | string | Yes | 6–8 character code from the authenticator app. |
+
+#### Success Response — 200
+
+Returns the same `LoginResponse` shape as `POST /api/v1/auth/login` with `requiresMfa: false`, `mfaEnrolled: true`, and tokens populated.
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | *(validation message)* | Missing or out-of-range `totpCode`. |
+| `401` | — | Missing or invalid JWT. |
+| `422` | Invalid or expired OTP. | TOTP code is wrong or clock-skew too large. |
+
+---
+
+### POST /api/v1/mfa/totp/login-verify
+
+Completes a TOTP-gated login. Called after a login response returns `requiresMfa: true` and `mfaMethod: "totp"`.
+
+**Auth required**: No (anonymous)
+**Rate limit**: `mfa-verify` — 5 requests per minute per IP
+
+#### Request
+
+```json
+{
+  "userId": "dc88786a-0b38-43bb-8dc3-7ec36f050ec9",
+  "totpCode": "483921"
+}
+```
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
-| `challengeId` | UUID | Yes | From the `challengeId` field in the login response. |
-| `code` | string | Yes | 4–8 character OTP code from the SMS. |
+| `userId` | UUID | Yes | From the `user.userId` field in the login response. |
+| `totpCode` | string | Yes | 6–8 character code from the authenticator app. |
 
 #### Success Response — 200
 
@@ -1919,7 +1929,319 @@ Returns the same `LoginResponse` shape as `POST /api/v1/auth/login` with `requir
 | HTTP | Message | Cause |
 |---|---|---|
 | `400` | *(validation message)* | Missing or invalid fields. |
-| `422` | Invalid or expired OTP. | Code wrong, expired, max attempts exceeded, or challenge not found. |
+| `422` | Invalid or expired OTP. | TOTP code wrong, or clock skew exceeded tolerance. |
+
+---
+
+### POST /api/v1/mfa/totp/request-email-fallback
+
+Requests an email OTP fallback for a TOTP user who cannot access their authenticator app (e.g. lost phone). Sends a one-time code to the user's registered email address.
+
+Always returns `200` — the response shape is identical whether or not the `userId` exists, to prevent user enumeration.
+
+**Auth required**: No (anonymous)
+**Rate limit**: `mfa-verify` — 5 requests per minute per IP
+
+#### Request
+
+```json
+{
+  "userId": "dc88786a-0b38-43bb-8dc3-7ec36f050ec9"
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `userId` | UUID | Yes | From the `user.userId` field in the login response. |
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": {
+    "challengeId": "b3d4e5f6-0000-0000-0000-000000000001"
+  }
+}
+```
+
+After receiving this response, direct the user to the email OTP login verify step using the returned `challengeId`.
+
+> **Security note:** If the `userId` does not exist or does not have TOTP configured, a decoy `challengeId` is returned. The subsequent login-verify call will fail gracefully — the caller cannot distinguish a real challenge from a decoy.
+
+---
+
+### POST /api/v1/mfa/email-otp/login-verify
+
+Completes an email OTP login. Called after:
+- A login response returns `requiresMfa: true` and `mfaMethod: "email_otp"`, **or**
+- A TOTP fallback was requested via `POST /api/v1/mfa/totp/request-email-fallback`.
+
+**Auth required**: No (anonymous)
+**Rate limit**: `mfa-verify` — 5 requests per minute per IP
+
+#### Request
+
+```json
+{
+  "challengeId": "b3d4e5f6-0000-0000-0000-000000000001",
+  "otpCode": "483921"
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `challengeId` | UUID | Yes | From the `challengeId` in the login response (email_otp method), or from the fallback response. |
+| `otpCode` | string | Yes | 4–8 character code from the email. |
+
+#### Success Response — 200
+
+Returns the same `LoginResponse` shape as `POST /api/v1/auth/login` with `requiresMfa: false` and tokens populated.
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | *(validation message)* | Missing or invalid fields. |
+| `422` | Invalid or expired OTP. | Code wrong, expired, or challenge not found. |
+
+---
+
+### POST /api/v1/mfa/email-otp/resend
+
+Resends the email OTP for a pending login challenge. Only valid for `email_otp` method challenges.
+
+Always returns `200` — the response shape is identical whether or not the `userId` exists.
+
+**Auth required**: No (anonymous)
+**Rate limit**: `mfa-verify` — 5 requests per minute per IP
+
+#### Request
+
+```json
+{
+  "userId": "dc88786a-0b38-43bb-8dc3-7ec36f050ec9"
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `userId` | UUID | Yes | From the `user.userId` field in the login response. |
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": {
+    "challengeId": "b3d4e5f6-0000-0000-0000-000000000001"
+  }
+}
+```
+
+---
+
+### POST /api/v1/mfa/backup-codes/generate
+
+Generates a new set of backup codes for the authenticated user. **Calling this invalidates any previously generated backup codes.** Codes are shown only once — the user must store them securely.
+
+**Auth required**: Yes (Bearer JWT)
+
+#### Request
+
+No body required.
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": {
+    "codes": [
+      "A1B2C3D4E5",
+      "F6G7H8I9J0",
+      "K1L2M3N4O5",
+      "P6Q7R8S9T0",
+      "U1V2W3X4Y5",
+      "Z6A7B8C9D0",
+      "E1F2G3H4I5",
+      "J6K7L8M9N0"
+    ],
+    "count": 8
+  }
+}
+```
+
+> **Important:** Show these codes to the user **once** and prompt them to save them. They cannot be retrieved again. Each code is 10 characters and single-use.
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `401` | — | Missing or invalid JWT. |
+
+---
+
+### POST /api/v1/mfa/backup-code/login-verify
+
+Completes a login using a backup code. Used as a last resort when the user cannot access their authenticator app and has no email OTP fallback available.
+
+**Auth required**: No (anonymous)
+**Rate limit**: `mfa-verify` — 5 requests per minute per IP
+
+#### Request
+
+```json
+{
+  "userId": "dc88786a-0b38-43bb-8dc3-7ec36f050ec9",
+  "backupCode": "A1B2C3D4E5"
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `userId` | UUID | Yes | From the `user.userId` field in the login response. |
+| `backupCode` | string | Yes | Exactly 10 characters. Single-use — consumed on success. |
+
+#### Success Response — 200
+
+Returns the same `LoginResponse` shape as `POST /api/v1/auth/login` with `requiresMfa: false` and tokens populated.
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | *(validation message)* | Missing or wrong-length backup code. |
+| `422` | Invalid or expired OTP. | Code not found, already used, or user not found. |
+
+---
+
+## Admin MFA
+
+Admin endpoints for managing user MFA. All require `AdminAccess` policy (`platform_owner` or `app_admin`).
+
+---
+
+### POST /api/v1/admin/mfa/{userId}/disable
+
+Disables MFA for the specified user. The user will no longer be prompted for MFA at login.
+
+**Auth required**: Yes — `AdminAccess` policy
+
+#### Request
+
+No body required.
+
+#### Success Response — 200
+
+```json
+{ "success": true, "message": "MFA disabled." }
+```
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `401` | — | Missing or invalid JWT. |
+| `403` | — | Caller lacks `AdminAccess`. |
+| `404` | Resource not found. | User not found. |
+
+---
+
+### POST /api/v1/admin/mfa/{userId}/reset
+
+Resets MFA for the specified user. Clears TOTP secret, backup codes, and MFA method. The user must re-enroll on their next login.
+
+**Auth required**: Yes — `AdminAccess` policy
+
+#### Request
+
+No body required.
+
+#### Success Response — 200
+
+```json
+{ "success": true, "message": "MFA reset." }
+```
+
+---
+
+### POST /api/v1/admin/mfa/{userId}/set-method
+
+Sets the MFA method for the specified user. Use this to switch a user between `email_otp` and `totp`.
+
+**Auth required**: Yes — `AdminAccess` policy
+
+#### Request
+
+```json
+{
+  "method": "email_otp"
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `method` | string | Yes | Must be `"email_otp"` or `"totp"`. |
+
+#### Success Response — 200
+
+```json
+{ "success": true, "message": "MFA method updated." }
+```
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | Method must be 'email_otp' or 'totp'. | Invalid method value. |
+| `404` | Resource not found. | User not found. |
+
+---
+
+## Admin Users
+
+Admin endpoints for user management. All require `AdminAccess` policy (`platform_owner` or `app_admin`).
+
+---
+
+### POST /api/v1/admin/users/{userId}/force-reset-password
+
+Forces a password reset for the specified user by sending a password reset email on their behalf. Use this from the admin panel when a user is locked out or requests an admin-initiated reset.
+
+**Auth required**: Yes — `AdminAccess` policy
+
+#### Request
+
+```json
+{
+  "appSlug": "dashboard-hub"
+}
+```
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `appSlug` | string | Yes | The slug of the app the user belongs to. Used to construct the reset link URL. |
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": { "message": "Password reset email sent." }
+}
+```
+
+The reset email is sent asynchronously — the `200` response does not guarantee delivery, only that the reset token was generated and the send was attempted.
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | App not found. | `appSlug` does not match a registered app. |
+| `401` | — | Missing or invalid JWT. |
+| `403` | — | Caller lacks `AdminAccess`. |
+| `404` | Resource not found. | User not found. |
 
 ---
 
@@ -2272,9 +2594,21 @@ GET /api/v1/access-review?companyId=7c9e6679-7425-40de-944b-e07fc1f90ae7&page=1&
 | `user_anonymized` | User PII anonymized (GDPR) |
 | `company_suspended` | Company suspended (all users suspended, tokens revoked) |
 | `company_deactivated` | Company set to inactive (all users + app roles deactivated) |
-| `mfa_enrolled` | User enrolled a phone number and verified OTP |
-| `mfa_login_verified` | User passed MFA challenge at login |
 | `identity_verification_completed` | User reached `fullyVerified = true` for the first time |
+| `password_changed` | User changed their own password |
+| `password_reset_requested` | Forgot-password email requested |
+| `password_reset_completed` | Password reset token consumed successfully |
+| `password_reset_forced_by_admin` | Admin triggered a force-reset-password on behalf of a user |
+| `mfa_otp_issued` | Email OTP challenge created for MFA login |
+| `mfa_totp_fallback_requested` | TOTP user requested email OTP fallback |
+| `mfa_verified` | MFA challenge passed (generic — see `mfa_login_verified` for login-specific) |
+| `mfa_failed` | MFA challenge failed |
+| `mfa_login_verified` | MFA challenge passed and login completed |
+| `mfa_enrolment_complete` | TOTP enrollment verified — MFA enabled on account |
+| `mfa_disabled` | MFA disabled by admin |
+| `mfa_reset` | MFA fully reset by admin |
+| `mfa_backup_codes_generated` | New backup codes generated by user |
+| `mfa_method_set` | MFA method changed by admin |
 
 ---
 
@@ -2296,10 +2630,11 @@ GET /api/v1/access-review?companyId=7c9e6679-7425-40de-944b-e07fc1f90ae7&page=1&
 
 ### Versioning
 
-The current API version is `v1`, reflected in all endpoint paths (`/api/v1/...`). The current platform release is **1.3.0**.
+The current API version is `v1`, reflected in all endpoint paths (`/api/v1/...`). The current platform release is **1.7.0**.
 
 | Version | Date | Summary |
 |---|---|---|
+| `1.7.0` | 2026-04-20 | TOTP MFA (authenticator app) replaces SMS OTP. New endpoints: TOTP enrol (begin + verify), TOTP login-verify, TOTP email fallback, email-OTP login-verify, email-OTP resend, backup code generate + login-verify, MFA status. Admin endpoints: disable MFA, reset MFA, set MFA method, force-reset-password. New audit event types: `mfa_totp_fallback_requested`, `password_reset_forced_by_admin` + full MFA event set. `mfaMethod`, `mfaEnrolmentPending`, `mfaEnrolled` added to `LoginResponse`. |
 | `1.6.0` | 2026-04-17 | Phase 1 additions: MFA endpoints (enroll, OTP verify, login-verify), identity verification endpoints, admin audit log endpoints. Rate limits documented for change-password (5/15min), forgot-password (3/15min), authorize (60/min). 503 error code added. `requiresMfa` and `challengeId` login response fields. `X-Service-Name` header. AuthZ cache behaviour noted. |
 | `1.5.0` | 2026-04-10 | ISO 27001 features: session enforcement, access review, compliance export, company members. |
 | `1.2.1` | 2026-03-27 | Validation errors now return platform envelope `{ success, message, errors }`. ServiceToken auth handler registered. Seed data simplified to Development Hub only. |

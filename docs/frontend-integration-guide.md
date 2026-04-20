@@ -1,8 +1,8 @@
 # FlatPlanet — Frontend Integration Guide
 
 **Audience:** Frontend developers
-**Last updated:** 2026-04-17
-**Verified against:** Security Platform v1.6.0 · Platform API (HubApi) v1.0.1
+**Last updated:** 2026-04-20
+**Verified against:** Security Platform v1.7.0 · Platform API (HubApi) v1.0.1
 **Tested by:** Integration tester (Claude Code)
 
 ---
@@ -11,14 +11,31 @@
 
 > These are verified changes from integration testing — update your frontend accordingly.
 
+### Security Platform v1.7.0 (2026-04-20)
+
+| # | Change | Impact |
+|---|---|---|
+| 1 | TOTP MFA (authenticator app) replaces SMS OTP | Enrollment flow changed — users now scan a QR code. See Step 1c. |
+| 2 | `POST /api/v1/mfa/totp/login-verify` — verify TOTP code at login | When `requiresMfa: true` and `mfaMethod: "totp"`, call this endpoint instead of the email-OTP verify |
+| 3 | `POST /api/v1/mfa/totp/request-email-fallback` — email OTP fallback for TOTP users | When user can't access authenticator app — call this, then use email-OTP login-verify. See Step 1d. |
+| 4 | `POST /api/v1/mfa/email-otp/login-verify` — email OTP login path | Separate endpoint for email OTP login (was `mfa/otp/login-verify`) |
+| 5 | `POST /api/v1/mfa/email-otp/resend` — resend email OTP | Expose a "Resend code" button — it is safe and will always return `200` |
+| 6 | `POST /api/v1/mfa/backup-codes/generate` — generate backup codes | Show in account settings. Prompt user to save before leaving the page. |
+| 7 | `POST /api/v1/mfa/backup-code/login-verify` — last-resort backup code login | New fallback option at the MFA screen |
+| 8 | `GET /api/v1/mfa/status` — user's MFA status | Use in account settings to show current MFA state |
+| 9 | `mfaMethod` added to login response | Use to determine whether to show TOTP or email OTP challenge screen |
+| 10 | `mfaEnrolmentPending` added to login response | `true` if the user must set up MFA before proceeding — redirect to enrollment |
+| 11 | `POST /api/v1/admin/users/{userId}/force-reset-password` — admin-triggered password reset | Admin panel action — sends a reset email on behalf of the user. See Admin section. |
+| 12 | Admin MFA management endpoints (disable, reset, set-method) | Admin panel — manage user MFA without user involvement. See Admin section. |
+
 ### Security Platform v1.6.0 (2026-04-17)
 
 | # | Change | Impact |
 |---|---|---|
-| 1 | Login response now includes `requiresMfa`, `challengeId`, `idleTimeoutMinutes` | Handle MFA challenge branch at login — if `requiresMfa: true`, call `/mfa/otp/login-verify` before using tokens |
-| 2 | `POST /api/v1/mfa/enroll` — phone enroll + SMS OTP | New MFA enrollment flow; call during account setup or from settings page |
-| 3 | `POST /api/v1/mfa/otp/verify` — complete enrollment | Verifies OTP after enroll; enables MFA on account |
-| 4 | `POST /api/v1/mfa/otp/login-verify` — complete MFA-gated login | New step required when `requiresMfa: true` is returned at login |
+| 1 | Login response now includes `requiresMfa`, `challengeId`, `idleTimeoutMinutes` | Handle MFA challenge branch at login — see v1.7.0 for updated branching logic (`mfaMethod`) |
+| 2 | ~~`POST /api/v1/mfa/enroll` — phone enroll + SMS OTP~~ | ⚠️ Superseded by v1.7.0 — use `POST /api/v1/mfa/totp/begin-enrol` + `verify-enrol` instead. See Step 1c. |
+| 3 | ~~`POST /api/v1/mfa/otp/verify` — complete enrollment~~ | ⚠️ Superseded by v1.7.0 — use `POST /api/v1/mfa/totp/verify-enrol` instead. See Step 1c. |
+| 4 | ~~`POST /api/v1/mfa/otp/login-verify` — complete MFA-gated login~~ | ⚠️ Superseded by v1.7.0 — use `totp/login-verify` or `email-otp/login-verify` depending on `mfaMethod`. See Step 1b. |
 | 5 | `GET /api/v1/identity/verification/status` — user's own verification status | Use to gate features requiring identity verification |
 | 6 | `POST /api/v1/auth/change-password` now rate limited: 5 req / 15 min per user | Show appropriate message on `429` |
 | 7 | `POST /api/v1/auth/forgot-password` now rate limited: 3 req / 15 min per IP | Show appropriate message on `429` |
@@ -83,9 +100,12 @@ The frontend only logs in through the Security Platform. The JWT it issues is us
 
 ```
 1.  POST  /api/v1/auth/login
-      ├─ requiresMfa: false → proceed to step 2
-      └─ requiresMfa: true  → POST /api/v1/mfa/otp/login-verify (with challengeId + code)
-                                └─ 200 → tokens issued, proceed to step 2
+      ├─ requiresMfa: false      → proceed to step 2
+      ├─ mfaEnrolmentPending: true → redirect to MFA enrollment (Step 1c)
+      ├─ requiresMfa: true, mfaMethod: "totp"      → POST /api/v1/mfa/totp/login-verify (userId + totpCode)
+      │                                                  └─ can't access app? → request email fallback (Step 1d)
+      └─ requiresMfa: true, mfaMethod: "email_otp" → POST /api/v1/mfa/email-otp/login-verify (challengeId + otpCode)
+                                                          └─ 200 → tokens issued, proceed to step 2
 2.  GET   /api/v1/auth/me                                 → get user profile + roles
 3.  GET   /api/projects                                   → list user's projects           (HubApi)
 4.  GET   /api/projects/{id}                              → get single project             (HubApi)
@@ -124,6 +144,9 @@ Content-Type: application/json
   "success": true,
   "data": {
     "requiresMfa": false,
+    "mfaMethod": null,
+    "mfaEnrolmentPending": false,
+    "mfaEnrolled": false,
     "challengeId": null,
     "accessToken": "eyJhbGci...",
     "refreshToken": "TUmzgLj...",
@@ -145,7 +168,10 @@ Content-Type: application/json
   "success": true,
   "data": {
     "requiresMfa": true,
-    "challengeId": "b3d4e5f6-0000-0000-0000-000000000001",
+    "mfaMethod": "totp",
+    "mfaEnrolmentPending": false,
+    "mfaEnrolled": false,
+    "challengeId": null,
     "accessToken": "",
     "refreshToken": "",
     "expiresIn": 0,
@@ -155,7 +181,11 @@ Content-Type: application/json
 }
 ```
 
-When `requiresMfa` is `true`: no tokens are issued yet. Show an OTP input, then call `POST /api/v1/mfa/otp/login-verify` with the `challengeId` and the code the user receives by SMS. See Step 1b below.
+When `requiresMfa` is `true`: no tokens are issued yet.
+
+- If `mfaMethod: "totp"` — `challengeId` is `null`. Show a TOTP input (code from the authenticator app). See Step 1b.
+- If `mfaMethod: "email_otp"` — `challengeId` is populated. Show an email OTP input. See Step 1b.
+- If `mfaEnrolmentPending: true` — the user hasn't set up MFA yet. Redirect to the MFA enrollment flow. See Step 1c.
 
 **`idleTimeoutMinutes`** — use this value to schedule your heartbeat interval: fire `POST /api/v1/auth/heartbeat` every `idleTimeoutMinutes × 0.5` minutes to keep the session alive. Default is `30` minutes, so send a heartbeat every 15 minutes.
 
@@ -173,98 +203,226 @@ When `requiresMfa` is `true`: no tokens are issued yet. Show an OTP input, then 
 
 ## Step 1b — MFA Login Verify (only when `requiresMfa: true`)
 
-**Endpoint:** `POST /api/v1/mfa/otp/login-verify` on the Security Platform
+Branch on `mfaMethod` from the login response.
+
+---
+
+### Branch A — TOTP (`mfaMethod: "totp"`)
+
+**Endpoint:** `POST /api/v1/mfa/totp/login-verify`
 
 **Auth required:** No
 
-Show an OTP input screen after the login response returns `requiresMfa: true`. The user receives a code by SMS.
+Show a code input screen. The user opens their authenticator app (Microsoft Authenticator, Google Authenticator) to get the current 6-digit code.
 
 **Request:**
 ```json
 {
-  "challengeId": "b3d4e5f6-0000-0000-0000-000000000001",
-  "code": "483921"
+  "userId": "dc88786a-0b38-43bb-8dc3-7ec36f050ec9",
+  "totpCode": "483921"
 }
 ```
 
-`challengeId` comes from the login response. `code` is what the user types in.
+`userId` is from `user.userId` in the login response. `totpCode` is what the user types in.
 
-**Response `200`:** Same shape as a standard login response — `requiresMfa: false`, tokens populated. Store and use normally.
+**Response `200`:** Standard `LoginResponse` with `requiresMfa: false` and tokens populated. Store and use normally.
 
 **Error cases:**
 
 | HTTP | Message | Action |
 |---|---|---|
-| `422` | Invalid or expired OTP. | Show inline error — let user retry. After too many attempts the challenge expires. |
-| `400` | *(validation message)* | Missing field |
+| `422` | Invalid or expired OTP. | Show inline error — let user retry. |
+| `400` | *(validation message)* | Missing field. |
 
 **Frontend notes:**
-- The challenge expires after 5 minutes. If the user takes too long, show "Code expired — please log in again" and redirect to login.
-- Do not expose a "resend code" option — have the user restart login to get a fresh challenge.
+- Show a "Can't access your authenticator app?" link that triggers the TOTP email fallback flow. See Step 1d.
+- Show a "Use a backup code" link as a last resort. See Step 1e.
 
 ---
 
-## Step 1c — MFA Enrollment (account settings)
+### Branch B — Email OTP (`mfaMethod: "email_otp"`)
 
-Allows a user to enroll their phone number for MFA. Two calls: enroll (sends SMS) → verify (confirms code).
+**Endpoint:** `POST /api/v1/mfa/email-otp/login-verify`
 
-**Step 1 — Send OTP**
+**Auth required:** No
 
-`POST /api/v1/mfa/enroll` — Auth required
+Show a code input screen. The user receives a one-time code by email.
 
 **Request:**
 ```json
 {
-  "phoneNumber": "+639171234567"
+  "challengeId": "b3d4e5f6-0000-0000-0000-000000000001",
+  "otpCode": "483921"
 }
 ```
+
+`challengeId` is from the login response. `otpCode` is what the user types in.
+
+**Response `200`:** Standard `LoginResponse` with `requiresMfa: false` and tokens populated. Store and use normally.
+
+**Error cases:**
+
+| HTTP | Message | Action |
+|---|---|---|
+| `422` | Invalid or expired OTP. | Show inline error — let user retry. |
+| `400` | *(validation message)* | Missing field. |
+
+**Frontend notes:**
+- The challenge expires after 5 minutes. If the user takes too long, show "Code expired — please log in again" and redirect to login.
+- Expose a **"Resend code"** button — call `POST /api/v1/mfa/email-otp/resend` with `{ "userId": "..." }`. On `200`, update the `challengeId` in state and show "Code resent."
+- Show a "Use a backup code" link as a last resort. See Step 1e.
+
+---
+
+## Step 1c — TOTP Enrollment (account settings)
+
+Place the enrollment flow in account settings. Triggered automatically if `mfaEnrolmentPending: true` at login. Two calls: begin-enrol (get QR code) → verify-enrol (confirm first code).
+
+**Step 1 — Get QR Code**
+
+`POST /api/v1/mfa/totp/begin-enrol` — Auth required
+
+No request body.
 
 **Response `200`:**
 ```json
 {
   "success": true,
   "data": {
-    "maskedPhone": "+63917***4567",
-    "expiresAt": "2026-04-17T10:15:00Z"
+    "qrCodeUri": "otpauth://totp/FlatPlanet%20Security%20Platform:alice@acme.com?secret=BASE32SECRET&issuer=FlatPlanet%20Security%20Platform"
   }
 }
 ```
 
-Show the masked phone and a code input. The OTP expires at `expiresAt`.
+Render `qrCodeUri` as a QR code image (use a client-side QR code library). Also show the raw URI as a "Can't scan? Enter manually" option. The user opens their authenticator app, scans the code, and proceeds to Step 2.
 
 **Error cases:**
 
 | HTTP | Message | Action |
 |---|---|---|
-| `400` | *(validation message)* | Invalid phone format |
-| `503` | SMS service is temporarily unavailable. Please try again. | Show retry message — SMS provider is down |
+| `400` | *(validation message)* | User already enrolled |
+| `401` | — | Session expired |
 
-**Step 2 — Verify OTP**
+**Step 2 — Verify First Code**
 
-`POST /api/v1/mfa/otp/verify` — Auth required
+`POST /api/v1/mfa/totp/verify-enrol` — Auth required
 
 **Request:**
 ```json
 {
-  "code": "483921"
+  "totpCode": "483921"
 }
 ```
+
+**Response `200`:** Standard `LoginResponse` with `requiresMfa: false`, `mfaEnrolled: true`, and tokens populated. Store tokens and proceed — the user is now logged in.
+
+After success, prompt the user to **generate backup codes** (Step 1e). They will need these if they lose access to their authenticator app.
+
+**Error cases:**
+
+| HTTP | Message | Action |
+|---|---|---|
+| `422` | Invalid or expired OTP. | Wrong code or clock skew — show inline error, let user retry |
+| `401` | — | Session expired |
+
+---
+
+## Step 1d — TOTP Email Fallback (can't access authenticator app)
+
+When a TOTP user cannot access their authenticator app, they can receive a one-time code by email instead. Two calls: request-email-fallback → email-otp/login-verify.
+
+Trigger this flow when the user clicks "Can't access your authenticator app?" on the TOTP login screen.
+
+**Step 1 — Request fallback code**
+
+`POST /api/v1/mfa/totp/request-email-fallback` — No auth
+
+**Request:**
+```json
+{
+  "userId": "dc88786a-0b38-43bb-8dc3-7ec36f050ec9"
+}
+```
+
+`userId` from the login response.
+
+**Response `200` (always):**
+```json
+{
+  "success": true,
+  "data": {
+    "challengeId": "b3d4e5f6-0000-0000-0000-000000000001"
+  }
+}
+```
+
+Always show the same confirmation regardless of the userId — the response never reveals whether the user exists.
+
+**Step 2 — Verify email OTP**
+
+Proceed with `POST /api/v1/mfa/email-otp/login-verify` using the returned `challengeId`. See Branch B in Step 1b.
+
+---
+
+## Step 1e — Backup Code Login (last resort)
+
+When the user cannot access their authenticator app and has no email access, they can use a pre-generated backup code. Each code is 10 characters and single-use.
+
+Trigger this flow when the user clicks "Use a backup code" on the MFA login screen.
+
+**Endpoint:** `POST /api/v1/mfa/backup-code/login-verify` — No auth
+
+**Request:**
+```json
+{
+  "userId": "dc88786a-0b38-43bb-8dc3-7ec36f050ec9",
+  "backupCode": "A1B2C3D4E5"
+}
+```
+
+**Response `200`:** Standard `LoginResponse` with tokens. After login, recommend the user generates new backup codes (Step 1f).
+
+**Error cases:**
+
+| HTTP | Message | Action |
+|---|---|---|
+| `422` | Invalid or expired OTP. | Code not found or already used — show error |
+
+---
+
+## Step 1f — Generate Backup Codes (account settings)
+
+Allow users to generate backup codes from their account settings. Useful after enrollment or after using all remaining codes.
+
+**Endpoint:** `POST /api/v1/mfa/backup-codes/generate` — Auth required
+
+No request body.
 
 **Response `200`:**
 ```json
 {
   "success": true,
-  "data": { "message": "MFA enrollment verified. MFA is now enabled on your account." }
+  "data": {
+    "codes": [
+      "A1B2C3D4E5",
+      "F6G7H8I9J0",
+      "K1L2M3N4O5",
+      "P6Q7R8S9T0",
+      "U1V2W3X4Y5",
+      "Z6A7B8C9D0",
+      "E1F2G3H4I5",
+      "J6K7L8M9N0"
+    ],
+    "count": 8
+  }
 }
 ```
 
-MFA is now active. The user will be asked for a code on their next login.
-
-**Error cases:**
-
-| HTTP | Message | Action |
-|---|---|---|
-| `422` | Invalid or expired OTP. | Show inline error — let user retry |
+**Frontend implementation notes:**
+- **Show codes once only** — display on screen and prompt the user to save them before navigating away. They cannot be retrieved again.
+- Calling this endpoint **invalidates any previously generated codes** — warn the user before they confirm.
+- Offer a "Copy all" button and a "Download as text file" option.
+- After saving, the user can see how many codes remain via `GET /api/v1/mfa/status` (`backupCodesRemaining`).
 
 ---
 
@@ -739,7 +897,7 @@ Revokes all refresh tokens and ends the session. Clear both tokens and redirect 
 
 ---
 
-## Step 8 — Change Password
+## Step 8 — Change Password *(user profile / account settings page)*
 
 **Endpoint:** `POST /api/v1/auth/change-password` on the Security Platform
 
@@ -788,7 +946,7 @@ Revokes all refresh tokens and ends the session. Clear both tokens and redirect 
 
 ---
 
-## Step 9 — Forgot Password (Request Reset Link)
+## Step 9 — Forgot Password *(login page)* 
 
 **Endpoint:** `POST /api/v1/auth/forgot-password` on the Security Platform
 
@@ -821,7 +979,7 @@ Revokes all refresh tokens and ends the session. Clear both tokens and redirect 
 
 ---
 
-## Step 10 — Reset Password (Consume Reset Token)
+## Step 10 — Reset Password *(email link landing page)*
 
 **Endpoint:** `POST /api/v1/auth/reset-password` on the Security Platform
 
@@ -905,6 +1063,84 @@ Use this to gate features that require identity verification (e.g. certain finan
 | `videoVerified` | Video verification complete. Always `false` — not yet implemented. |
 | `fullyVerified` | The value to gate on. Recomputed server-side from current config on every call. |
 | `verifiedAt` | When the user first reached `fullyVerified: true`. `null` if not yet verified. |
+
+---
+
+## Admin — MFA Management *(admin panel)*
+
+These endpoints require `platform_owner` or `app_admin` role. Use them in the admin user management panel.
+
+### Disable MFA for a user
+
+`POST /api/v1/admin/mfa/{userId}/disable`
+
+Disables MFA entirely. The user can log in with password only until they re-enroll.
+
+**Response `200`:** `{ "success": true, "message": "MFA disabled." }`
+
+---
+
+### Reset MFA for a user
+
+`POST /api/v1/admin/mfa/{userId}/reset`
+
+Clears the TOTP secret, backup codes, and MFA method. The user must re-enroll on their next login. Use when a user loses their authenticator device and email access.
+
+**Response `200`:** `{ "success": true, "message": "MFA reset." }`
+
+---
+
+### Change a user's MFA method
+
+`POST /api/v1/admin/mfa/{userId}/set-method`
+
+**Request:**
+```json
+{ "method": "email_otp" }
+```
+
+Valid values: `"email_otp"` | `"totp"`
+
+**Response `200`:** `{ "success": true, "message": "MFA method updated." }`
+
+---
+
+## Admin — Force Reset Password *(admin panel)*
+
+`POST /api/v1/admin/users/{userId}/force-reset-password`
+
+Sends a password reset email on behalf of the user. Use this in the admin panel when a user is locked out, requests help, or their account needs a password reset without them initiating it themselves.
+
+**Auth required:** Yes — `platform_owner` or `app_admin`
+
+**Request:**
+```json
+{
+  "appSlug": "dashboard-hub"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": { "message": "Password reset email sent." }
+}
+```
+
+The user receives a standard password reset email. The reset link expires in 15 minutes.
+
+**Error cases:**
+
+| HTTP | Message | Action |
+|---|---|---|
+| `400` | App not found. | Check `appSlug` — must match a registered app |
+| `404` | Resource not found. | User not found |
+
+> **Note on password actions by placement:**
+> - **Login page** — Forgot Password (`POST /auth/forgot-password`): user-initiated, no login required
+> - **User profile / settings** — Change Password (`POST /auth/change-password`): authenticated user changes their own password  
+> - **Admin panel** — Force Reset Password (`POST /admin/users/{id}/force-reset-password`): admin sends reset email on behalf of user
 
 ---
 
