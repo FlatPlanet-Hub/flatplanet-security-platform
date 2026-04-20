@@ -28,6 +28,7 @@ public static class AuditEventType
     public const string PasswordResetCompleted = "password_reset_completed";
     public const string PasswordResetForcedByAdmin = "password_reset_forced_by_admin";
     public const string MfaOtpIssued = "mfa_otp_issued";
+    public const string MfaTotpFallbackRequested = "mfa_totp_fallback_requested";
     public const string MfaVerified = "mfa_verified";
     public const string MfaFailed = "mfa_failed";
     public const string MfaLoginVerified = "mfa_login_verified";
