@@ -127,6 +127,15 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
+    // Return our standard JSON envelope instead of ASP.NET Core's empty 429 body.
+    options.OnRejected = async (context, token) =>
+    {
+        context.HttpContext.Response.ContentType = "application/json";
+        await context.HttpContext.Response.WriteAsync(
+            "{\"success\":false,\"message\":\"Too many requests. Please try again later.\"}",
+            token);
+    };
+
     // forgot-password: 3 per 15 min per IP
     options.AddPolicy("forgot-password", context =>
         RateLimitPartition.GetFixedWindowLimiter(
