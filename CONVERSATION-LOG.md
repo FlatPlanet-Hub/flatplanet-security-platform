@@ -144,3 +144,127 @@ Before any Phase 2 code:
 - [ ] Tifa: update API reference to v1.7.0 after Phase 2
 
 ---
+
+---
+
+## Session: Phase 2 MFA Completion, Bug Fixes, Admin Features & Docs
+
+**Date**: 2026-04-20
+**Branch at start**: `main`
+**PRs merged this session**: #38, #39 (and a hotfix commit directly to main for OBS-2)
+
+---
+
+### What Was Done
+
+#### 1. SMTP configured
+
+Switched from Resend to the team's own mail server. MailKit 4.16.0, StartTLS port 587, Polly retry. Verified delivery to `erick.reyes@flatplanet.com`.
+
+#### 2. V25 migration — added missing `email` column to `mfa_challenges`
+
+V23 had added `challenge_type` but omitted `email`. `MfaChallengeRepository.CreateAsync` was crashing on INSERT for email OTP flows. Fixed with:
+
+```sql
+ALTER TABLE mfa_challenges ADD COLUMN IF NOT EXISTS email TEXT;
+```
+
+Run against Supabase `project_security` schema. Confirmed success.
+
+#### 3. BUG-03 fixed — resend endpoint no longer leaks user existence
+
+`POST /api/v1/mfa/email-otp/resend` was throwing `KeyNotFoundException` for users without email_otp method, which `ExceptionHandlingMiddleware` mapped to 404 — leaking whether a userId existed. Fixed: controller catches `KeyNotFoundException` and returns 200 with a decoy `challengeId`.
+
+#### 4. MailKit CVE patched (GHSA-9j88-vvj5-vhgr)
+
+Upgraded MailKit 4.8.0 → 4.16.0 in `FlatPlanet.Security.Infrastructure.csproj`.
+
+#### 5. TOTP email fallback feature built and shipped (PR #38)
+
+New endpoint: `POST /api/v1/mfa/totp/request-email-fallback`
+
+- TOTP users who can't access their authenticator app can receive an email OTP instead
+- Guards on `mfa_method == "totp"` — email_otp users cannot call this
+- Always returns 200 with a `challengeId` (real or decoy) — user enumeration safe
+- Logs `mfa_totp_fallback_requested` audit event
+- Caller then uses `POST /api/v1/mfa/email-otp/login-verify` to complete login
+
+New audit event type: `MfaTotpFallbackRequested = "mfa_totp_fallback_requested"`
+
+#### 6. Admin force-reset-password feature built and shipped (PR #39)
+
+New endpoint: `POST /api/v1/admin/users/{userId}/force-reset-password`
+
+- Requires `AdminAccess` policy (`platform_owner` or `app_admin`)
+- Accepts `{ appSlug }` to construct the reset link URL
+- Sends password reset email on behalf of the user (fire-and-forget)
+- Logs `password_reset_forced_by_admin` audit event with `performed_by` (the admin's userId)
+- Returns 404 if user not found, 400 if app slug not found
+
+New audit event type: `PasswordResetForcedByAdmin = "password_reset_forced_by_admin"`
+New controller: `AdminUserController` at `api/v1/admin/users`
+
+#### 7. OBS-2 fixed — empty 429 body from rate limiter
+
+ASP.NET Core's rate limiter middleware fires before `ExceptionHandlingMiddleware`, so rejected requests were returning an empty body instead of the standard JSON envelope. Fixed by adding an `OnRejected` handler in `Program.cs` that writes `{ success: false, message: "Too many requests. Please try again later." }`.
+
+#### 8. Gap analysis and multiple review rounds (Lightning)
+
+Several gaps found and fixed across PRs:
+- GAP-1: `AdminUserController` route was missing `v1` prefix
+- GAP-2: `AdminForceResetPasswordAsync` was not passing `performedByUserId` to audit log
+- GAP-3: `AdminUserController` response shape used wrong helper (`OkMessage` vs `OkData`)
+- GAP-4/5: `RequestTotpFallbackRequest` and `AdminForceResetPasswordRequest` were positional records — changed to `public class` with `[Required]` attributes per project pattern
+- Blast radius: `RequestTotpFallbackAsync` had no distinct audit event — fixed by logging `MfaTotpFallbackRequested`
+
+#### 9. Integration testing — TOTP fallback verified (Yuffie)
+
+Full INT-F1 test passed:
+- Triggered TOTP login → `requiresMfa: true`, `mfaMethod: "totp"`
+- Called `totp/request-email-fallback` with userId
+- Received real email OTP at `erick.reyes@flatplanet.com` (code: 725327)
+- Completed login via `email-otp/login-verify` with `challengeId` + code
+- Got valid JWT — confirmed
+
+#### 10. Docs updated to v1.7.0 (Tifa)
+
+Both docs fully updated:
+
+**`security-api-reference.md`**:
+- MFA section replaced — all new TOTP/email OTP endpoints documented
+- Admin MFA section added (disable, reset, set-method)
+- Admin Users section added (force-reset-password)
+- Audit events table updated with full MFA + password event set
+- Version bumped to 1.7.0
+
+**`frontend-integration-guide.md`**:
+- v1.7.0 What's New table added (12 changes)
+- Auth flow diagram updated with TOTP/email OTP branches and `mfaEnrolmentPending` path
+- Login response examples updated with `mfaMethod`, `mfaEnrolmentPending`, `mfaEnrolled`
+- Step 1b rewritten — Branch A (TOTP) and Branch B (email OTP)
+- Step 1c rewritten — TOTP QR code enrollment (replaces SMS)
+- Steps 1d, 1e, 1f added — TOTP fallback, backup code login, generate backup codes
+- Steps 8/9/10 labelled with UI placement (user profile / login page / email link page)
+- Admin MFA management and Admin Force Reset Password sections added
+- v1.6.0 SMS endpoints marked ⚠️ Superseded by v1.7.0
+
+---
+
+### Decisions Made
+
+| Decision | Rationale |
+|---|---|
+| Resend endpoint always returns 200 | Prevents user enumeration — attacker cannot probe whether a userId has email_otp configured |
+| TOTP fallback always returns 200 with decoy challengeId | Same reason — TOTP user existence must not leak |
+| Admin force-reset fire-and-forget email | 200 does not guarantee delivery — acceptable for admin-initiated flows, consistent with forgot-password |
+| OBS-2 fix via OnRejected handler | Rate limiter runs before ExceptionHandlingMiddleware — only option without restructuring the pipeline |
+| Separate commits per feature | MailKit CVE, fallback feature, admin feature, OBS-2 each got their own commit for clean history |
+
+---
+
+### Open Items
+
+- [ ] GAP-TEST-1: DB-level OTP lockout (`TooManyRequestsException`) still untested — rate limiter fires first at same limit of 5. Test from a fresh IP with requests spread over >1 minute.
+- [ ] Memory files: `project_context.md`, `role_tester.md`, `role_techwriter.md` need updating with session results.
+
+---
