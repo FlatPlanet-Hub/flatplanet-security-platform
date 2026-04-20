@@ -286,6 +286,18 @@ public class MfaService : IMfaService
         return await SendEmailOtpAsync(userId, ipAddress);
     }
 
+    public async Task<MfaChallenge> RequestTotpFallbackAsync(Guid userId, string? ipAddress)
+    {
+        var user = await _users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        // Only TOTP users can use this fallback — do not reveal method or existence to callers
+        if (!user.MfaEnabled || user.MfaMethod != "totp")
+            throw new KeyNotFoundException("User not found.");
+
+        return await SendEmailOtpAsync(userId, ipAddress);
+    }
+
     public async Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent)
     {
         var challenge = await _challenges.GetByIdAsync(challengeId)
