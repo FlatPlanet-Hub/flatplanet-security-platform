@@ -362,9 +362,81 @@ Updated `App.BaseUrl` → `https://fpdevelopmenthub.netlify.app`.
 
 ### Open Items
 
-- [ ] BUG-01 (P2) — Polly 500 bug: login with `email_otp` returns 500 instead of 503 when SMTP fails. Fix: catch Polly exception type in ExceptionHandlingMiddleware or SmtpEmailService.
-- [ ] Configure SMTP in Azure App Service (env vars: `Smtp__Host/Port/Username/Password/FromEmail`) — unblocks email OTP tests (G1/G4b/G5/resend)
-- [ ] Yuffie re-runs blocked tests after SMTP configured
+- [x] BUG-01 — fixed (MfaService catches SMTP exceptions → ServiceUnavailableException → 503) ✅
+- [x] SMTP configured — Office 365, `do-not-reply@flatplanet.com.au`, Azure App Service env vars ✅
+- [x] All email OTP tests passed (G1/G4b/G5/resend/disclosure) ✅
 - [ ] Auth portal URL — update `App.BaseUrl` when portal is built
+
+---
+
+## Session: Dataverse Integration — HubApi
+
+**Date**: 2026-04-21
+**Repo**: FlatPlanetHubApi
+**Branch**: `feature/feat-dataverse-integration` → merged to `main` via PR #23
+
+---
+
+### What Was Done
+
+#### 1. Built Dataverse proxy in HubApi
+
+Two new endpoints:
+- `GET /api/v1/dataverse/employees` — active Round Earth Philippines employees
+- `GET /api/v1/dataverse/accounts` — client accounts
+
+Token fetched from existing Azure Function (`GetCrmToken`), cached 55 min via `IMemoryCache`. No Dataverse credentials needed by consuming apps.
+
+**Employee fields**: `name`, `employmentDate`, `separationDate`, `employmentStatus`, `clientOpsLead`, `client`
+**Server-side filters**: `statecode = 0` + `_fp_company_value = bd7c35ae-b482-e911-a83a-000d3a07f6fe` (Round Earth Philippines, Inc.)
+
+#### 2. Bugs found and fixed during testing
+
+| Bug | Fix |
+|---|---|
+| `$filter=statecode eq 0` — spaces caused `UriFormatException` → 500 | URL-encoded to `statecode%20eq%200` |
+| `_fp_reportingto_value` doesn't exist | Corrected to `_fp_activereportingto_value` |
+| `accounts?$select=fp_name` — field doesn't exist on standard `account` entity | Corrected to `name` |
+
+#### 3. Azure env var required
+`Dataverse__TokenFunctionKey` set in `flatplanet-api` App Service configuration.
+
+#### 4. Docs updated
+- `platform-api-reference.md` bumped to v1.5.0 — full Dataverse section added
+- RWT and client ticketing teams notified via Teams with link to docs
+
+#### 5. Stale HubApi branches cleaned up
+All 12 stale remote branches deleted. Remote is now `main` + `develop` only.
+
+---
+
+### Commits (HubApi main)
+
+| Commit | Message |
+|---|---|
+| `024001e` | feat: add Dataverse proxy integration (PR #23) |
+| `6f24f64` | fix: URL-encode spaces in OData filter |
+| `c084745` | fix: correct Client Ops Lead field name |
+| `a206377` | fix: correct accounts field name |
+| `e88218a` | fix: filter employees to Round Earth + accounts field |
+| `22cf3e2` | docs: API reference v1.5.0 |
+
+---
+
+### Key Decisions
+
+| Decision | Rationale |
+|---|---|
+| Proxy in HubApi (not per-app direct) | One credential set, shared token cache, both RWT and ticketing use same endpoint |
+| Token cached 55 min | Tokens expire in ~60 min; 5-min buffer prevents stale token calls |
+| No filtering params on endpoints | Raw data returned — consuming apps own their business logic |
+| Company filter hardcoded server-side | Only Round Earth Philippines data needed; filter verified against Dataverse schema |
+
+---
+
+### Open Items
+
+- [ ] Auth portal URL — update `App.BaseUrl` in SP when portal is built
+- [ ] Fix fp-development-hub GitHub branch in DB (`github_branch = 'master'`)
 
 ---
