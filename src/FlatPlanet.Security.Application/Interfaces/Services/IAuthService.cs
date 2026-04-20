@@ -10,5 +10,6 @@ public interface IAuthService
     Task<UserProfileResponse> GetProfileAsync(Guid userId, string? appSlug);
     Task ChangePasswordAsync(Guid userId, ChangePasswordRequest request, string? ipAddress);
     Task ForgotPasswordAsync(ForgotPasswordRequest request);
+    Task AdminForceResetPasswordAsync(Guid userId, string appSlug, Guid performedByUserId);
     Task ResetPasswordAsync(ResetPasswordRequest request, string? ipAddress);
 }
