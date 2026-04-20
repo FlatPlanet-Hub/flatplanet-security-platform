@@ -74,6 +74,7 @@ public class AuthController : ApiController
     }
 
     [Authorize]
+    [EnableRateLimiting("update-profile")]
     [HttpPatch("me")]
     public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequest request)
     {

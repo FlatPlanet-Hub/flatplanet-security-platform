@@ -18,10 +18,28 @@ public class SessionValidationMiddleware
         _cache = cache;
     }
 
+    // Paths the enrolment-only token is permitted to call.
+    private static readonly HashSet<string> _enrolmentAllowedPaths = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "/api/v1/mfa/totp/begin-enrol",
+        "/api/v1/mfa/totp/verify-enrol"
+    };
+
     public async Task InvokeAsync(HttpContext context)
     {
         if (context.User.Identity?.IsAuthenticated == true)
         {
+            // Enrolment-only tokens may only reach the two enrolment endpoints.
+            var enrolmentOnly = context.User.FindFirstValue("enrolment_only");
+            if (enrolmentOnly == "true" && !_enrolmentAllowedPaths.Contains(context.Request.Path.Value ?? string.Empty))
+            {
+                context.Response.StatusCode  = StatusCodes.Status403Forbidden;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsync(
+                    "{\"success\":false,\"message\":\"Enrolment token may only be used to complete MFA enrollment.\"}");
+                return;
+            }
+
             var sessionIdClaim = context.User.FindFirstValue("session_id");
             if (!string.IsNullOrEmpty(sessionIdClaim) && Guid.TryParse(sessionIdClaim, out var sessionId))
             {

@@ -480,14 +480,27 @@ public class AuthService : IAuthService
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
 
-        var requiresReLogin = false;
+        // ── Validate everything before any writes ────────────────────────────
+        var newName       = string.IsNullOrWhiteSpace(request.FullName) ? null : request.FullName.Trim();
+        var newEmail      = string.IsNullOrWhiteSpace(request.Email)    ? null : request.Email.Trim().ToLowerInvariant();
+        var nameChanging  = newName  is not null && newName  != user.FullName;
+        var emailChanging = newEmail is not null && newEmail != user.Email.ToLowerInvariant();
+
+        if (emailChanging)
+        {
+            // GAP-2 fix: GetByEmailAsync is now case-insensitive; this catches all casing variants
+            var existing = await _users.GetByEmailAsync(newEmail!);
+            if (existing is not null && existing.Id != userId)
+                throw new InvalidOperationException("That email address is already in use.");
+        }
+
+        // ── Writes (only reached when validation passes) ─────────────────────
         var auditTasks = new List<Task>();
 
-        if (!string.IsNullOrWhiteSpace(request.FullName) && request.FullName.Trim() != user.FullName)
+        if (nameChanging)
         {
-            await _users.UpdateFullNameAsync(userId, request.FullName.Trim());
-            user.FullName = request.FullName.Trim();
-
+            await _users.UpdateFullNameAsync(userId, newName!);
+            user.FullName = newName!;
             auditTasks.Add(_auditLog.LogAsync(new AuthAuditLog
             {
                 UserId    = userId,
@@ -496,45 +509,34 @@ public class AuthService : IAuthService
             }));
         }
 
-        if (!string.IsNullOrWhiteSpace(request.Email))
+        if (emailChanging)
         {
-            var normalised = request.Email.Trim().ToLowerInvariant();
+            await _users.UpdateEmailAsync(userId, newEmail!);
+            user.Email = newEmail!;
 
-            if (normalised != user.Email.ToLowerInvariant())
+            // Email is embedded in the JWT claims — revoke all sessions so the stale token
+            // cannot be used after the email change. User must log in again.
+            try
             {
-                var existing = await _users.GetByEmailAsync(normalised);
-                if (existing is not null && existing.Id != userId)
-                    throw new InvalidOperationException("That email address is already in use.");
-
-                await _users.UpdateEmailAsync(userId, normalised);
-                user.Email = normalised;
-
-                // Email is embedded in the JWT claims — revoke all sessions so the stale token
-                // cannot be used after the email change. User must log in again.
-                try
-                {
-                    var activeSessionIds = await _sessions.GetActiveSessionIdsByUserAsync(userId);
-                    await Task.WhenAll(
-                        _sessions.EndAllActiveSessionsByUserAsync(userId, "email_changed"),
-                        _refreshTokens.RevokeAllByUserAsync(userId, "email_changed")
-                    );
-                    foreach (var sid in activeSessionIds)
-                        _cache.Remove($"fp:sec:session:{sid}");
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogError(ex, "Failed to revoke sessions after email change for user {UserId}", userId);
-                }
-
-                requiresReLogin = true;
-
-                auditTasks.Add(_auditLog.LogAsync(new AuthAuditLog
-                {
-                    UserId    = userId,
-                    EventType = AuditEventType.ProfileEmailUpdated,
-                    IpAddress = ipAddress
-                }));
+                var activeSessionIds = await _sessions.GetActiveSessionIdsByUserAsync(userId);
+                await Task.WhenAll(
+                    _sessions.EndAllActiveSessionsByUserAsync(userId, "email_changed"),
+                    _refreshTokens.RevokeAllByUserAsync(userId, "email_changed")
+                );
+                foreach (var sid in activeSessionIds)
+                    _cache.Remove($"fp:sec:session:{sid}");
             }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to revoke sessions after email change for user {UserId}", userId);
+            }
+
+            auditTasks.Add(_auditLog.LogAsync(new AuthAuditLog
+            {
+                UserId    = userId,
+                EventType = AuditEventType.ProfileEmailUpdated,
+                IpAddress = ipAddress
+            }));
         }
 
         if (auditTasks.Count > 0)
@@ -542,9 +544,9 @@ public class AuthService : IAuthService
 
         return new UpdateProfileResponse
         {
-            FullName       = user.FullName,
-            Email          = user.Email,
-            RequiresReLogin = requiresReLogin
+            FullName        = user.FullName,
+            Email           = user.Email,
+            RequiresReLogin = emailChanging
         };
     }
 

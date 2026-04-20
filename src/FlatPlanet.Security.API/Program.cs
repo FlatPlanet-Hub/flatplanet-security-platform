@@ -166,6 +166,16 @@ builder.Services.AddRateLimiter(options =>
                 Window = TimeSpan.FromMinutes(1)
             }));
 
+    // update-profile: 10 per 15 min per user (prevents authenticated email enumeration via 409)
+    options.AddPolicy("update-profile", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(15)
+            }));
+
     // mfa-verify: 5 per min per IP (TOTP and email OTP login/enrol verify endpoints)
     options.AddPolicy("mfa-verify", context =>
         RateLimitPartition.GetFixedWindowLimiter(

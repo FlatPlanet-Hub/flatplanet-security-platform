@@ -28,7 +28,7 @@ public class UserRepository : IUserRepository
     {
         using var conn = await _db.CreateConnectionAsync();
         return await conn.QuerySingleOrDefaultAsync<User>(
-            "SELECT * FROM users WHERE email = @Email",
+            "SELECT * FROM users WHERE LOWER(email) = LOWER(@Email)",
             new { Email = email });
     }
 
