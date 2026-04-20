@@ -22,7 +22,8 @@ public class SessionValidationMiddleware
     private static readonly HashSet<string> _enrolmentAllowedPaths = new(StringComparer.OrdinalIgnoreCase)
     {
         "/api/v1/mfa/totp/begin-enrol",
-        "/api/v1/mfa/totp/verify-enrol"
+        "/api/v1/mfa/totp/verify-enrol",
+        "/api/v1/auth/logout"   // allow user to cancel enrollment cleanly
     };
 
     public async Task InvokeAsync(HttpContext context)
