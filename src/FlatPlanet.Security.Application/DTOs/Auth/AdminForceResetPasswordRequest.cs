@@ -1,9 +1,6 @@
-using System.ComponentModel.DataAnnotations;
-
 namespace FlatPlanet.Security.Application.DTOs.Auth;
 
-public class AdminForceResetPasswordRequest
-{
-    [Required]
-    public string AppSlug { get; set; } = string.Empty;
-}
+// No fields required — the reset link is built using the platform's configured
+// AppOptions.BaseUrl. Since this is an SSO service, the reset URL is always
+// the same central endpoint regardless of which app triggered the reset.
+public class AdminForceResetPasswordRequest { }

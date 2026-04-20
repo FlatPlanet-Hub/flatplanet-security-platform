@@ -1145,12 +1145,7 @@ Sends a password reset email on behalf of the user. Use this in the admin panel 
 
 **Auth required:** Yes — `platform_owner` or `app_admin`
 
-**Request:**
-```json
-{
-  "appSlug": "dashboard-hub"
-}
-```
+**Request:** No body required.
 
 **Response `200`:**
 ```json
@@ -1160,13 +1155,12 @@ Sends a password reset email on behalf of the user. Use this in the admin panel 
 }
 ```
 
-The user receives a standard password reset email. The reset link expires in 15 minutes.
+The user receives a standard password reset email. The reset link expires in 15 minutes and points to the platform's configured central reset-password URL.
 
 **Error cases:**
 
 | HTTP | Message | Action |
 |---|---|---|
-| `400` | App not found. | Check `appSlug` — must match a registered app |
 | `404` | Resource not found. | User not found |
 
 > **Note on password actions by placement:**

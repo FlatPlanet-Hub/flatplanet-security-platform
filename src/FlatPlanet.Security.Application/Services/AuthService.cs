@@ -561,25 +561,12 @@ public class AuthService : IAuthService
         if (user is null)
             return;
 
-        // Resolve the base URL for the reset link.
-        // If appSlug is provided, look up the app's registered base URL.
-        // Fall back to AppOptions.BaseUrl so callers that don't know the app slug still work.
-        string baseUrl;
-        if (!string.IsNullOrWhiteSpace(request.AppSlug))
-        {
-            var app = await _apps.GetBySlugAsync(request.AppSlug);
-            if (app is null)
-                return;
-            baseUrl = app.BaseUrl.TrimEnd('/');
-        }
-        else
-        {
-            baseUrl = _appOptions.BaseUrl.TrimEnd('/');
-        }
-
+        // SSO: reset link always uses the platform's configured base URL.
+        // There is no per-app routing — the reset-password page is one central location.
+        var baseUrl = _appOptions.BaseUrl.TrimEnd('/');
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
-            _logger.LogWarning("ForgotPasswordAsync: no base URL configured — reset link cannot be built.");
+            _logger.LogWarning("ForgotPasswordAsync: AppOptions.BaseUrl is not configured — reset link cannot be built.");
             return;
         }
 
@@ -627,13 +614,15 @@ public class AuthService : IAuthService
         }
     }
 
-    public async Task AdminForceResetPasswordAsync(Guid userId, string appSlug, Guid performedByUserId)
+    public async Task AdminForceResetPasswordAsync(Guid userId, Guid performedByUserId)
     {
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
 
-        var app = await _apps.GetBySlugAsync(appSlug)
-            ?? throw new ArgumentException($"App '{appSlug}' not found.");
+        // SSO: reset link always uses the platform's configured base URL.
+        var baseUrl = _appOptions.BaseUrl.TrimEnd('/');
+        if (string.IsNullOrWhiteSpace(baseUrl))
+            throw new InvalidOperationException("AppOptions.BaseUrl is not configured.");
 
         var plain = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
         var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(plain))).ToLowerInvariant();
@@ -646,7 +635,7 @@ public class AuthService : IAuthService
             ExpiresAt = DateTime.UtcNow.AddMinutes(15)
         });
 
-        var link = $"{app.BaseUrl.TrimEnd('/')}/reset-password?token={plain}";
+        var link = $"{baseUrl}/reset-password?token={plain}";
 
         try
         {

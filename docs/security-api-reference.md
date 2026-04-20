@@ -554,7 +554,6 @@ Initiates a password reset flow by sending a time-limited reset link to the user
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `email` | string | Yes | The email address to send the reset link to. Must be a valid email format. |
-| `appSlug` | string | No | App slug used to resolve the reset link URL. When provided, the app's registered `BaseUrl` is used. When omitted, the platform's configured `App.BaseUrl` is used as fallback. Max 100 chars. |
 
 #### Success Response — 200
 
@@ -2319,15 +2318,7 @@ Forces a password reset for the specified user by sending a password reset email
 
 #### Request
 
-```json
-{
-  "appSlug": "dashboard-hub"
-}
-```
-
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `appSlug` | string | Yes | The slug of the app the user belongs to. Used to construct the reset link URL. |
+No body required.
 
 #### Success Response — 200
 
@@ -2344,7 +2335,6 @@ The reset email is sent asynchronously — the `200` response does not guarantee
 
 | HTTP | Message | Cause |
 |---|---|---|
-| `400` | App not found. | `appSlug` does not match a registered app. |
 | `401` | — | Missing or invalid JWT. |
 | `403` | — | Caller lacks `AdminAccess`. |
 | `404` | Resource not found. | User not found. |

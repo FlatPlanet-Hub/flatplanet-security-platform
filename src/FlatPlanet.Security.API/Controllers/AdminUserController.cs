@@ -1,4 +1,3 @@
-using FlatPlanet.Security.Application.DTOs.Auth;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,9 +14,9 @@ public class AdminUserController : ApiController
     public AdminUserController(IAuthService auth) => _auth = auth;
 
     [HttpPost("{userId}/force-reset-password")]
-    public async Task<IActionResult> ForceResetPassword(Guid userId, [FromBody] AdminForceResetPasswordRequest request)
+    public async Task<IActionResult> ForceResetPassword(Guid userId)
     {
-        await _auth.AdminForceResetPasswordAsync(userId, request.AppSlug, GetUserId());
+        await _auth.AdminForceResetPasswordAsync(userId, GetUserId());
         return OkData(new { message = "Password reset email sent." });
     }
 }
