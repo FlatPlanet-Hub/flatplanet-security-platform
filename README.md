@@ -1,6 +1,6 @@
 # FlatPlanet Security Platform
 
-Centralized Identity and Access Management (IAM) service for all FlatPlanet applications. Handles authentication, authorization, session management, audit logging, and GDPR compliance in one place — so individual apps don't need to implement any of it.
+Centralized Identity and Access Management (IAM) / SSO service for all FlatPlanet applications. Handles authentication, MFA, authorization, session management, audit logging, and GDPR compliance in one place — so individual apps don't need to implement any of it.
 
 ---
 
@@ -13,6 +13,8 @@ Centralized Identity and Access Management (IAM) service for all FlatPlanet appl
 | Data access | Dapper (no EF Core) |
 | Password hashing | BCrypt.Net (work factor 12) |
 | Auth tokens | JWT Bearer + opaque refresh tokens |
+| MFA | TOTP (authenticator app) + email OTP fallback |
+| Email | MailKit 4.x via SMTP (StartTLS port 587) |
 | API docs | Scalar UI at `/scalar/v1` |
 
 ---
@@ -28,20 +30,13 @@ src/
   FlatPlanet.Security.Tests/        # Unit tests (xUnit + Moq)
 db/
   V1__initial_schema.sql
-  V2__fixes.sql
-  V3__rls_fixes.sql
-  V4__session_idle_timeout.sql
-  V5__standalone_auth.sql
-  V6__remove_registered_by_fk.sql
-  V11__drop_granted_by_fk.sql
-  V12__view_projects_permission.sql
-  V13__role_permissions_fk_drop.sql
-  V14__business_membership.sql
-  seed_test_data.sql
+  ...
+  V25__mfa_challenge_email.sql      # Latest migration
 docs/
-  api-reference.md                  # Complete endpoint + payload reference
-  Feature.md                        # Full feature specification
-  phase-*.md                        # Phase-by-phase implementation history
+  security-api-reference.md        # Complete endpoint + payload reference (v1.7.0)
+  frontend-integration-guide.md    # Frontend integration walkthrough (v1.7.0)
+  Feature.md                       # Full feature specification
+  phase-*.md                       # Phase-by-phase implementation history
 ```
 
 ---
@@ -52,6 +47,7 @@ docs/
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download)
 - PostgreSQL database (Supabase or local)
+- SMTP server for email delivery (MFA OTPs + password reset links)
 
 ### 1. Clone
 
@@ -62,7 +58,7 @@ cd flatplanet-security-platform
 
 ### 2. Configure
 
-Copy `appsettings.json` and fill in your values:
+Fill in your values in `appsettings.json` (or override via environment variables / Azure App Config):
 
 ```json
 {
@@ -83,6 +79,9 @@ Copy `appsettings.json` and fill in your values:
   "ServiceToken": {
     "Token": "your-service-token-min-32-characters"
   },
+  "App": {
+    "BaseUrl": "https://your-frontend.com"
+  },
   "Cors": {
     "AllowedOrigins": ["https://your-frontend.com"]
   },
@@ -91,36 +90,22 @@ Copy `appsettings.json` and fill in your values:
     "Port": 587,
     "Username": "your-smtp-username",
     "Password": "your-smtp-password",
-    "FromAddress": "noreply@your-domain.com",
+    "FromEmail": "noreply@your-domain.com",
     "FromName": "FlatPlanet Security"
+  },
+  "Mfa": {
+    "TotpEncryptionKey": "32-byte-base64-encoded-AES256-key="
   }
 }
 ```
+
+> **`App.BaseUrl`** — the base URL of the frontend that hosts the `/reset-password` page. Password reset emails link to `{App.BaseUrl}/reset-password?token=...`. Since this is an SSO service, this is one central URL regardless of which app initiated the reset.
 
 For local development, use `appsettings.Development.json` to override values without touching the base config.
 
 ### 3. Run Migrations
 
-Apply the SQL migration files in order against your database:
-
-```
-db/V1__initial_schema.sql
-db/V2__fixes.sql
-db/V3__rls_fixes.sql
-db/V4__session_idle_timeout.sql
-db/V5__standalone_auth.sql
-db/V6__remove_registered_by_fk.sql
-db/V11__drop_granted_by_fk.sql
-db/V12__view_projects_permission.sql
-db/V13__role_permissions_fk_drop.sql
-db/V14__business_membership.sql
-```
-
-Optionally seed test data:
-
-```
-db/seed_test_data.sql
-```
+Apply the SQL migration files in order against your database. The latest migration is `V25__mfa_challenge_email.sql`.
 
 ### 4. Run
 
@@ -137,21 +122,19 @@ API is available at `https://localhost:5001`. Interactive docs at `https://local
 dotnet test
 ```
 
-25 unit tests across `AuthService`, `AuthorizationService`, `CompanyService`, and `SessionValidationMiddleware`.
-
 ---
 
 ## Authentication
 
-The platform supports two auth methods:
+The platform is a full SSO — no external auth provider. Apps delegate all auth to this service.
 
 **User auth (JWT)**
 
-The platform owns the full auth stack — no external provider. Passwords are stored as bcrypt hashes (work factor 12). On login, credentials are verified directly against the database and a JWT access token + refresh token are issued.
+Passwords are stored as bcrypt hashes (work factor 12). On login, credentials are verified against the database and a JWT access token + refresh token are issued.
 
 ```
 POST /api/v1/auth/login
-→ { accessToken, refreshToken, expiresIn, user }
+→ { accessToken, refreshToken, expiresIn, user, requiresMfa, mfaMethod, mfaEnrolmentPending }
 ```
 
 Protected endpoints require:
@@ -162,60 +145,63 @@ Authorization: Bearer <accessToken>
 
 Sessions are enforced by middleware on every request — idle and absolute timeouts are configurable via the security config API.
 
-**Password self-service**
+**MFA (TOTP + email OTP)**
 
-Users can change their password or reset a forgotten one without admin involvement:
+Two supported methods — mutually exclusive per user:
+
+| Method | Flow |
+|---|---|
+| `totp` | User scans a QR code in Microsoft/Google Authenticator. Login requires the 6-digit code. Email OTP fallback available if authenticator is lost. |
+| `email_otp` | One-time code sent to the user's registered email address on each login. |
+
+When `requiresMfa: true` is returned from login, no tokens are issued until the challenge is completed. Backup codes (8 per generation, single-use) provide a last-resort recovery path.
+
+If `mfaEnrolmentPending: true`, MFA is required but not yet set up. A short-lived enrollment-only token (10 min, no refresh) is returned — valid only for the enrollment endpoints and logout.
+
+**Profile self-service**
 
 ```
-POST /api/v1/auth/change-password   → change password (JWT required); revokes all sessions on success
+PATCH /api/v1/auth/me         → change display name and/or email (email change revokes all sessions)
+POST /api/v1/auth/change-password   → change password (revokes all sessions on success)
 POST /api/v1/auth/forgot-password   → send reset link to email (no auth required)
 POST /api/v1/auth/reset-password    → consume reset token and set new password (no auth required)
 ```
 
-Reset tokens expire in 15 minutes and are single-use. A SHA-256 hash is stored — the raw token is never persisted. SMTP must be configured under the `Smtp` section in `appsettings.json` for reset emails to be delivered.
+Reset tokens expire in 15 minutes and are single-use. A SHA-256 hash is stored — the raw token is never persisted. The reset link always points to `App.BaseUrl/reset-password?token=...` — no per-app routing.
 
 **Server-to-server (Service Token)**
 
-Backend services (e.g. HubApi) authenticate using a static bearer token configured in `appsettings.json` under `ServiceToken.Token`. The service token grants full `platform_owner` + `app_admin` access. Set a minimum 32-character secret and keep it out of source control.
+Backend services authenticate using a static bearer token configured in `appsettings.json` under `ServiceToken.Token`. The service token grants full `platform_owner` + `app_admin` access. Set a minimum 32-character secret and keep it out of source control.
+
+---
+
+## Admin MFA Management
+
+Admins (`app_admin` or `platform_owner`) can manage user MFA without user involvement:
+
+| Endpoint | Description |
+|---|---|
+| `POST /api/v1/admin/mfa/{userId}/disable` | Disable MFA for a user |
+| `POST /api/v1/admin/mfa/{userId}/reset` | Clear TOTP secret + backup codes — forces re-enrollment |
+| `POST /api/v1/admin/mfa/{userId}/set-method` | Switch user between `totp` and `email_otp` |
+| `POST /api/v1/admin/users/{userId}/force-reset-password` | Send password reset email on behalf of a user |
 
 ---
 
 ## Business Membership
 
-Users can belong to more than one company simultaneously. Memberships are tracked in the `user_business_memberships` table and are surfaced in the JWT.
+Users can belong to more than one company simultaneously. Memberships are tracked in the `user_business_memberships` table and surfaced in the JWT.
 
-### JWT — `business_codes` claim
+The JWT includes parallel `business_codes` and `business_ids` claims. Single-membership users get a plain string; multiple memberships serialize as an array — always normalize before use:
 
-Every access token now includes a `business_codes` array listing the short code of each company the user is an active member of:
-
-```json
-{
-  "sub": "dc88786a-...",
-  "email": "chris.moriarty@flatplanet.com",
-  "business_codes": ["fp"]
-}
+```js
+const codes = Array.isArray(jwt.business_codes) ? jwt.business_codes : jwt.business_codes ? [jwt.business_codes] : [];
 ```
-
-Downstream services (e.g. HubApi) can use this claim to restrict file or resource access to the user's companies without an additional API call.
-
-### Membership Endpoints
-
-All membership endpoints require the `PlatformOwner` role.
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/api/v1/companies/{companyId}/members` | List all members of a company |
-| `POST` | `/api/v1/companies/{companyId}/members` | Add a user to a company |
-| `DELETE` | `/api/v1/companies/{companyId}/members/{userId}` | Remove a user from a company |
-
-### Company `code` field
-
-Companies now carry an optional short `code` identifier (e.g. `"fp"`). The `code` is returned by `GET /api/v1/companies/{id}` and accepted by `POST /api/v1/companies` and `PUT /api/v1/companies/{id}`.
 
 ---
 
 ## Documentation
 
-- **[API Reference](docs/security-api-reference.md)** — all 49 endpoints with request/response schemas, field tables, error cases
-- **[Changelog](CHANGELOG.md)** — full version history
+- **[API Reference](docs/security-api-reference.md)** — all endpoints with request/response schemas, field tables, error cases (v1.7.0)
+- **[Frontend Integration Guide](docs/frontend-integration-guide.md)** — step-by-step guide for frontend teams (v1.7.0)
 - **[Feature Spec](docs/Feature.md)** — complete feature specification and requirements
