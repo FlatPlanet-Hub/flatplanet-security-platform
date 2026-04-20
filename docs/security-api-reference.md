@@ -177,18 +177,60 @@ Verifies credentials against the platform's database (bcrypt, work factor 12). I
 }
 ```
 
-When `requiresMfa` is `true`, the client must call `POST /api/v1/mfa/otp/login-verify` with the `challengeId` and the OTP code. Tokens are not issued until the challenge is verified.
+When `requiresMfa` is `true`, the client must complete the MFA challenge before tokens are issued. See `POST /api/v1/mfa/totp/login-verify` or `POST /api/v1/mfa/email-otp/login-verify` depending on `mfaMethod`.
+
+**MFA enrollment pending (MFA required but user has not yet enrolled):**
+
+```json
+{
+  "success": true,
+  "data": {
+    "requiresMfa": false,
+    "mfaEnrolmentPending": true,
+    "mfaMethod": "totp",
+    "mfaEnrolled": false,
+    "challengeId": null,
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "",
+    "expiresIn": 600,
+    "idleTimeoutMinutes": 10,
+    "user": {
+      "userId": "dc88786a-0b38-43bb-8dc3-7ec36f050ec9",
+      "email": "alice@acme.com",
+      "fullName": "Alice Chen",
+      "companyId": "a5af2cfc-2887-4e60-942d-8c29ccf012cf"
+    }
+  }
+}
+```
+
+When `mfaEnrolmentPending` is `true`, the user must complete MFA enrollment before accessing the application. The `accessToken` returned is a **restricted enrollment-only token** — it is only valid for the two enrollment endpoints and logout. All other authenticated endpoints return `403`. There is no refresh token.
 
 | Field | Type | Notes |
 |---|---|---|
 | `requiresMfa` | boolean | `true` when the user has MFA enrolled and must complete a challenge before tokens are issued. |
-| `challengeId` | string (UUID) \| null | Present when `requiresMfa` is `true`. Pass to `POST /api/v1/mfa/otp/login-verify`. |
-| `accessToken` | string | JWT. Lifetime = `jwt_access_expiry_minutes` × 60 seconds. Empty string when `requiresMfa` is `true`. |
-| `refreshToken` | string | Opaque token. Store securely. Single-use (rotated on each refresh). Empty string when `requiresMfa` is `true`. |
-| `expiresIn` | integer | Access token lifetime in **seconds**. |
+| `mfaEnrolmentPending` | boolean | `true` when MFA is required on the account but the user has not yet enrolled. An enrollment-only `accessToken` is provided. |
+| `mfaMethod` | string \| null | `"totp"` or `"email_otp"`. Present in both `requiresMfa` and `mfaEnrolmentPending` responses. |
+| `mfaEnrolled` | boolean | `true` once the user has completed enrollment. |
+| `challengeId` | string (UUID) \| null | Present when `requiresMfa: true` and `mfaMethod: "email_otp"`. `null` for TOTP. |
+| `accessToken` | string | JWT. Full token when login succeeds. Enrollment-only token (10 min, no refresh) when `mfaEnrolmentPending: true`. Empty string when `requiresMfa: true`. |
+| `refreshToken` | string | Opaque token. Single-use (rotated on each refresh). Empty when `requiresMfa: true` or `mfaEnrolmentPending: true`. |
+| `expiresIn` | integer | Access token lifetime in **seconds**. `600` for enrollment tokens. |
 | `idleTimeoutMinutes` | integer | Session idle timeout in **minutes**. Session is invalidated if no authenticated request arrives within this window. Use this to schedule heartbeats — fire at `idleTimeoutMinutes × 0.5` minutes. |
 | `user.userId` | UUID | Use this as the user identifier in downstream calls. |
 | `user.companyId` | string | UUID as string. |
+
+#### Enrollment-only token restrictions
+
+When `mfaEnrolmentPending: true`, the `accessToken` is restricted. The following paths are permitted:
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /api/v1/mfa/totp/begin-enrol` | Get QR code to set up authenticator app |
+| `POST /api/v1/mfa/totp/verify-enrol` | Confirm first code and complete enrollment |
+| `POST /api/v1/auth/logout` | Cancel enrollment and end session cleanly |
+
+Any other authenticated request returns `403 Forbidden` with `"Enrolment token may only be used to complete MFA enrollment."`
 
 #### Error Responses
 
@@ -365,6 +407,69 @@ GET /api/v1/auth/me?appSlug=dashboard-hub
 
 - `appAccess` is empty (`[]`) when `appSlug` is not provided or the user has no role in that app.
 - `platformRoles` reflects roles defined directly on the platform (e.g. `app_admin`, `platform_owner`).
+
+---
+
+### PATCH /api/v1/auth/me
+
+Updates the authenticated user's display name and/or email address. Both fields are optional — send only the fields you want to change.
+
+**Auth required**: Yes (Bearer JWT)
+**Rate limit**: 10 requests per 15 minutes per user (keyed on JWT subject)
+
+#### Request
+
+```json
+{
+  "fullName": "Alice Chen-Park",
+  "email": "alice.new@acme.com"
+}
+```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `fullName` | string | No | 1–150 characters. Trimmed. |
+| `email` | string | No | Must be a valid email. Max 254 chars. Case-insensitive uniqueness check across all users. |
+
+At least one field must be provided.
+
+#### Success Response — 200
+
+```json
+{
+  "success": true,
+  "data": {
+    "fullName": "Alice Chen-Park",
+    "email": "alice.new@acme.com",
+    "requiresReLogin": false
+  }
+}
+```
+
+| Field | Notes |
+|---|---|
+| `fullName` | Updated display name. |
+| `email` | Updated email address (or the existing one if unchanged). |
+| `requiresReLogin` | `true` if the email was changed. All sessions and refresh tokens are revoked — the client must redirect to login. |
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | At least one field (fullName or email) must be provided. | Empty request body. |
+| `400` | *(validation message)* | `fullName` length out of range, or `email` format invalid. |
+| `401` | — | Missing or invalid JWT. |
+| `409` | Email is already in use. | Another user already has that email address. |
+| `429` | — | Rate limit exceeded (10 per 15 min per user). |
+
+#### Notes
+
+- **Name change only**: session is preserved — no re-login required. `requiresReLogin` is `false`.
+- **Email change**: all sessions and refresh tokens are revoked immediately. `requiresReLogin` is `true`. The client must clear stored tokens and redirect to the login page.
+- Email uniqueness is checked case-insensitively — `Alice@Acme.com` and `alice@acme.com` are treated as the same address.
+- `userId` is derived from the JWT — it is never taken from the request body.
 
 ---
 
@@ -2609,6 +2714,8 @@ GET /api/v1/access-review?companyId=7c9e6679-7425-40de-944b-e07fc1f90ae7&page=1&
 | `mfa_reset` | MFA fully reset by admin |
 | `mfa_backup_codes_generated` | New backup codes generated by user |
 | `mfa_method_set` | MFA method changed by admin |
+| `profile_name_updated` | User changed their own display name via `PATCH /api/v1/auth/me` |
+| `profile_email_updated` | User changed their own email address via `PATCH /api/v1/auth/me` — triggers full session revocation |
 
 ---
 
@@ -2634,7 +2741,7 @@ The current API version is `v1`, reflected in all endpoint paths (`/api/v1/...`)
 
 | Version | Date | Summary |
 |---|---|---|
-| `1.7.0` | 2026-04-20 | TOTP MFA (authenticator app) replaces SMS OTP. New endpoints: TOTP enrol (begin + verify), TOTP login-verify, TOTP email fallback, email-OTP login-verify, email-OTP resend, backup code generate + login-verify, MFA status. Admin endpoints: disable MFA, reset MFA, set MFA method, force-reset-password. New audit event types: `mfa_totp_fallback_requested`, `password_reset_forced_by_admin` + full MFA event set. `mfaMethod`, `mfaEnrolmentPending`, `mfaEnrolled` added to `LoginResponse`. |
+| `1.7.0` | 2026-04-20 | TOTP MFA (authenticator app) replaces SMS OTP. New endpoints: TOTP enrol (begin + verify), TOTP login-verify, TOTP email fallback, email-OTP login-verify, email-OTP resend, backup code generate + login-verify, MFA status. Admin endpoints: disable MFA, reset MFA, set MFA method, force-reset-password. `PATCH /api/v1/auth/me` (self-service name + email change; email change revokes all sessions). New audit event types: `mfa_totp_fallback_requested`, `password_reset_forced_by_admin`, `profile_name_updated`, `profile_email_updated` + full MFA event set. `mfaMethod`, `mfaEnrolmentPending`, `mfaEnrolled` added to `LoginResponse`. `mfaEnrolmentPending: true` now returns a restricted enrollment-only `accessToken` (10 min, no refresh). |
 | `1.6.0` | 2026-04-17 | Phase 1 additions: MFA endpoints (enroll, OTP verify, login-verify), identity verification endpoints, admin audit log endpoints. Rate limits documented for change-password (5/15min), forgot-password (3/15min), authorize (60/min). 503 error code added. `requiresMfa` and `challengeId` login response fields. `X-Service-Name` header. AuthZ cache behaviour noted. |
 | `1.5.0` | 2026-04-10 | ISO 27001 features: session enforcement, access review, compliance export, company members. |
 | `1.2.1` | 2026-03-27 | Validation errors now return platform envelope `{ success, message, errors }`. ServiceToken auth handler registered. Seed data simplified to Development Hub only. |

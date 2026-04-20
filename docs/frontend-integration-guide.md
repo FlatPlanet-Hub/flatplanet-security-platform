@@ -2,7 +2,7 @@
 
 **Audience:** Frontend developers
 **Last updated:** 2026-04-20
-**Verified against:** Security Platform v1.7.0 · Platform API (HubApi) v1.0.1
+**Verified against:** Security Platform v1.7.0 (updated) · Platform API (HubApi) v1.0.1
 **Tested by:** Integration tester (Claude Code)
 
 ---
@@ -27,6 +27,8 @@
 | 10 | `mfaEnrolmentPending` added to login response | `true` if the user must set up MFA before proceeding — redirect to enrollment |
 | 11 | `POST /api/v1/admin/users/{userId}/force-reset-password` — admin-triggered password reset | Admin panel action — sends a reset email on behalf of the user. See Admin section. |
 | 12 | Admin MFA management endpoints (disable, reset, set-method) | Admin panel — manage user MFA without user involvement. See Admin section. |
+| 13 | `PATCH /api/v1/auth/me` — self-service name and email change | New profile update endpoint. Name change: no re-login. Email change: `requiresReLogin: true` — all sessions revoked. See Step 13. |
+| 14 | `mfaEnrolmentPending: true` now returns a restricted enrollment `accessToken` | Use it to call `begin-enrol` and `verify-enrol`. Token is 10 min, no refresh, restricted to enrollment endpoints only. See Step 1 / Step 1c. |
 
 ### Security Platform v1.6.0 (2026-04-17)
 
@@ -183,9 +185,39 @@ Content-Type: application/json
 
 When `requiresMfa` is `true`: no tokens are issued yet.
 
-- If `mfaMethod: "totp"` — `challengeId` is `null`. Show a TOTP input (code from the authenticator app). See Step 1b.
-- If `mfaMethod: "email_otp"` — `challengeId` is populated. Show an email OTP input. See Step 1b.
-- If `mfaEnrolmentPending: true` — the user hasn't set up MFA yet. Redirect to the MFA enrollment flow. See Step 1c.
+- If `mfaMethod: "totp"` — `challengeId` is `null`. Show a TOTP input. See Step 1b Branch A.
+- If `mfaMethod: "email_otp"` — `challengeId` is populated. Show an email OTP input. See Step 1b Branch B.
+
+**Response — MFA enrollment pending (`mfaEnrolmentPending: true`):**
+```json
+{
+  "success": true,
+  "data": {
+    "requiresMfa": false,
+    "mfaMethod": "totp",
+    "mfaEnrolmentPending": true,
+    "mfaEnrolled": false,
+    "challengeId": null,
+    "accessToken": "eyJhbGci...",
+    "refreshToken": "",
+    "expiresIn": 600,
+    "idleTimeoutMinutes": 10,
+    "user": {
+      "userId": "dc88786a-0b38-43bb-8dc3-7ec36f050ec9",
+      "email": "alice@acme.com",
+      "fullName": "Alice Chen",
+      "companyId": "a5af2cfc-2887-4e60-942d-8c29ccf012cf"
+    }
+  }
+}
+```
+
+When `mfaEnrolmentPending` is `true`: MFA is required on this account but the user hasn't set it up yet. The `accessToken` is a **restricted enrollment-only token** — valid for 10 minutes, no refresh token.
+
+- Use this token to call `POST /api/v1/mfa/totp/begin-enrol` and `POST /api/v1/mfa/totp/verify-enrol`. See Step 1c.
+- This token is **not** a full session token — calling any other `[Authorize]` endpoint returns `403`.
+- If the user wants to cancel: call `POST /api/v1/auth/logout` with this token, then redirect to login.
+- Always guard against `mfaEnrolmentPending: true` with an empty `accessToken` (defensive): if `accessToken` is blank, show an error and redirect back to login — do not attempt enrollment.
 
 **`idleTimeoutMinutes`** — use this value to schedule your heartbeat interval: fire `POST /api/v1/auth/heartbeat` every `idleTimeoutMinutes × 0.5` minutes to keep the session alive. Default is `30` minutes, so send a heartbeat every 15 minutes.
 
@@ -1141,6 +1173,75 @@ The user receives a standard password reset email. The reset link expires in 15 
 > - **Login page** — Forgot Password (`POST /auth/forgot-password`): user-initiated, no login required
 > - **User profile / settings** — Change Password (`POST /auth/change-password`): authenticated user changes their own password  
 > - **Admin panel** — Force Reset Password (`POST /admin/users/{id}/force-reset-password`): admin sends reset email on behalf of user
+
+---
+
+## Step 13 — Update Profile *(user profile / account settings page)*
+
+Allows an authenticated user to change their own display name and/or email address. Both fields are optional — send only what is changing.
+
+**Endpoint:** `PATCH /api/v1/auth/me` on the Security Platform
+
+**Auth required:** Yes — include the current access token in the `Authorization` header.
+
+**Rate limit:** 10 requests per 15 minutes per user.
+
+**Request (name change only):**
+```json
+{
+  "fullName": "Alice Chen-Park"
+}
+```
+
+**Request (email change only):**
+```json
+{
+  "email": "alice.new@acme.com"
+}
+```
+
+**Request (both):**
+```json
+{
+  "fullName": "Alice Chen-Park",
+  "email": "alice.new@acme.com"
+}
+```
+
+**Response `200`:**
+```json
+{
+  "success": true,
+  "data": {
+    "fullName": "Alice Chen-Park",
+    "email": "alice.new@acme.com",
+    "requiresReLogin": true
+  }
+}
+```
+
+| Field | Notes |
+|---|---|
+| `fullName` | Updated display name. |
+| `email` | Updated email (or existing if unchanged). |
+| `requiresReLogin` | `true` if email was changed — all sessions revoked. Clear tokens and redirect to login. |
+
+**Error cases:**
+
+| HTTP | Message | Action |
+|---|---|---|
+| `400` | At least one field (fullName or email) must be provided. | Empty request body. |
+| `400` | *(validation message)* | Name too long, or invalid email format. |
+| `401` | — | Session expired — redirect to login. |
+| `409` | Email is already in use. | Show inline error on the email field. |
+| `429` | — | Rate limited (10 per 15 min per user). |
+
+**Frontend implementation notes:**
+
+- **Name change** (`requiresReLogin: false`): update the displayed name in the UI — the session remains valid, no re-login required.
+- **Email change** (`requiresReLogin: true`): immediately clear both tokens from storage and redirect to the login page. All sessions have been revoked server-side — the stored access token is now invalid.
+- If both name and email are sent and the email is new, `requiresReLogin` is `true` regardless. Always check `requiresReLogin` on the response rather than inferring from the request.
+- Validate email format client-side before submitting.
 
 ---
 
