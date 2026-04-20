@@ -67,8 +67,16 @@ public class MfaController : ApiController
     public async Task<IActionResult> ResendEmailOtp([FromBody] ResendEmailOtpRequest request)
     {
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
-        var result = await _mfa.ResendEmailOtpAsync(request.UserId, ipAddress);
-        return OkData(new { challengeId = result.Id });
+        try
+        {
+            var result = await _mfa.ResendEmailOtpAsync(request.UserId, ipAddress);
+            return OkData(new { challengeId = result.Id });
+        }
+        catch (KeyNotFoundException)
+        {
+            // Safe generic response — never reveal whether userId exists or has email_otp enabled
+            return OkData(new { challengeId = Guid.NewGuid() });
+        }
     }
 
     [HttpPost("email-otp/login-verify")]
