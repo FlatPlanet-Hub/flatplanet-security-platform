@@ -38,4 +38,6 @@ public static class AuditEventType
     public const string MfaBackupCodesGenerated = "mfa_backup_codes_generated";
     public const string MfaMethodSet = "mfa_method_set";
     public const string IdentityVerificationCompleted = "identity_verification_completed";
+    public const string ProfileNameUpdated = "profile_name_updated";
+    public const string ProfileEmailUpdated = "profile_email_updated";
 }

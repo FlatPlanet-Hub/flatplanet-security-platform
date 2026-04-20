@@ -96,6 +96,22 @@ public class UserRepository : IUserRepository
             user);
     }
 
+    public async Task UpdateFullNameAsync(Guid userId, string fullName)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET full_name = @FullName WHERE id = @Id",
+            new { FullName = fullName, Id = userId });
+    }
+
+    public async Task UpdateEmailAsync(Guid userId, string email)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE users SET email = @Email WHERE id = @Id",
+            new { Email = email, Id = userId });
+    }
+
     public async Task UpdateLastSeenAtAsync(Guid userId, DateTime lastSeenAt)
     {
         using var conn = await _db.CreateConnectionAsync();

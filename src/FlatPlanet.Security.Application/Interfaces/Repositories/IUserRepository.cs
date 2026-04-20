@@ -19,6 +19,8 @@ public interface IUserRepository
     Task SuspendByCompanyIdAsync(Guid companyId, IDbConnection conn, IDbTransaction tx);
     Task DeactivateAllByCompanyIdAsync(Guid companyId, IDbConnection conn, IDbTransaction tx);
     Task<User> CreateAsync(User user);
+    Task UpdateFullNameAsync(Guid userId, string fullName);
+    Task UpdateEmailAsync(Guid userId, string email);
     Task UpdatePasswordHashAsync(Guid userId, string passwordHash);
     Task UpdatePasswordHashAsync(Guid userId, string passwordHash, System.Data.IDbConnection conn, System.Data.IDbTransaction tx);
     Task UpdateMfaEnabledAsync(Guid userId, bool enabled);

@@ -472,6 +472,82 @@ public class AuthService : IAuthService
         });
     }
 
+    public async Task<UpdateProfileResponse> UpdateProfileAsync(Guid userId, UpdateProfileRequest request, string? ipAddress)
+    {
+        if (string.IsNullOrWhiteSpace(request.FullName) && string.IsNullOrWhiteSpace(request.Email))
+            throw new ArgumentException("At least one field (fullName or email) must be provided.");
+
+        var user = await _users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        var requiresReLogin = false;
+        var auditTasks = new List<Task>();
+
+        if (!string.IsNullOrWhiteSpace(request.FullName) && request.FullName.Trim() != user.FullName)
+        {
+            await _users.UpdateFullNameAsync(userId, request.FullName.Trim());
+            user.FullName = request.FullName.Trim();
+
+            auditTasks.Add(_auditLog.LogAsync(new AuthAuditLog
+            {
+                UserId    = userId,
+                EventType = AuditEventType.ProfileNameUpdated,
+                IpAddress = ipAddress
+            }));
+        }
+
+        if (!string.IsNullOrWhiteSpace(request.Email))
+        {
+            var normalised = request.Email.Trim().ToLowerInvariant();
+
+            if (normalised != user.Email.ToLowerInvariant())
+            {
+                var existing = await _users.GetByEmailAsync(normalised);
+                if (existing is not null && existing.Id != userId)
+                    throw new InvalidOperationException("That email address is already in use.");
+
+                await _users.UpdateEmailAsync(userId, normalised);
+                user.Email = normalised;
+
+                // Email is embedded in the JWT claims — revoke all sessions so the stale token
+                // cannot be used after the email change. User must log in again.
+                try
+                {
+                    var activeSessionIds = await _sessions.GetActiveSessionIdsByUserAsync(userId);
+                    await Task.WhenAll(
+                        _sessions.EndAllActiveSessionsByUserAsync(userId, "email_changed"),
+                        _refreshTokens.RevokeAllByUserAsync(userId, "email_changed")
+                    );
+                    foreach (var sid in activeSessionIds)
+                        _cache.Remove($"fp:sec:session:{sid}");
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to revoke sessions after email change for user {UserId}", userId);
+                }
+
+                requiresReLogin = true;
+
+                auditTasks.Add(_auditLog.LogAsync(new AuthAuditLog
+                {
+                    UserId    = userId,
+                    EventType = AuditEventType.ProfileEmailUpdated,
+                    IpAddress = ipAddress
+                }));
+            }
+        }
+
+        if (auditTasks.Count > 0)
+            await Task.WhenAll(auditTasks);
+
+        return new UpdateProfileResponse
+        {
+            FullName       = user.FullName,
+            Email          = user.Email,
+            RequiresReLogin = requiresReLogin
+        };
+    }
+
     public async Task ForgotPasswordAsync(ForgotPasswordRequest request)
     {
         var user = await _users.GetByEmailAsync(request.Email);

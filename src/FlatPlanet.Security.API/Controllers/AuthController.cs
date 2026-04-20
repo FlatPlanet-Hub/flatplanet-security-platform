@@ -73,6 +73,16 @@ public class AuthController : ApiController
         return OkMessage("Password changed. Please log in again.");
     }
 
+    [Authorize]
+    [HttpPatch("me")]
+    public async Task<IActionResult> UpdateProfile([FromBody] UpdateProfileRequest request)
+    {
+        var userId = GetUserId();
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var result = await _authService.UpdateProfileAsync(userId, request, ipAddress);
+        return OkData(result);
+    }
+
     [EnableRateLimiting("forgot-password")]
     [HttpPost("forgot-password")]
     public async Task<IActionResult> ForgotPassword([FromBody] ForgotPasswordRequest request)
