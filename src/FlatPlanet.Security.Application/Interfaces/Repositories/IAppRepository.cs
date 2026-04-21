@@ -10,4 +10,5 @@ public interface IAppRepository
     Task<IEnumerable<App>> GetByIdsAsync(IEnumerable<Guid> ids);
     Task<App> CreateAsync(App app);
     Task UpdateAsync(App app);
+    Task UpdateSlugAsync(Guid id, string newSlug);
 }

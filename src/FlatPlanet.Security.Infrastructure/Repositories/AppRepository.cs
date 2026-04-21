@@ -56,15 +56,23 @@ public class AppRepository : IAppRepository
     public async Task UpdateAsync(App app)
     {
         using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE apps SET name = @Name, base_url = @BaseUrl, status = @Status WHERE id = @Id", app);
+    }
+
+    public async Task UpdateSlugAsync(Guid id, string newSlug)
+    {
+        using var conn = await _db.CreateConnectionAsync();
         try
         {
             await conn.ExecuteAsync(
-                "UPDATE apps SET name = @Name, slug = @Slug, base_url = @BaseUrl, status = @Status WHERE id = @Id", app);
+                "UPDATE apps SET slug = @Slug WHERE id = @Id::uuid",
+                new { Slug = newSlug, Id = id });
         }
         catch (PostgresException ex) when (ex.SqlState == "23505")
         {
             throw new InvalidOperationException(
-                $"An app with slug '{app.Slug}' already exists.", ex);
+                $"An app with slug '{newSlug}' already exists.", ex);
         }
     }
 }

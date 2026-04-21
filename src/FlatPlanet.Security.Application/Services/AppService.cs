@@ -67,10 +67,12 @@ public class AppService : IAppService
         app.Status = request.Status;
         if (request.BaseUrl is not null)
             app.BaseUrl = request.BaseUrl;
-        if (!string.IsNullOrWhiteSpace(request.Slug))
-            app.Slug = request.Slug;
 
         await _apps.UpdateAsync(app);
+
+        // Slug update is separate — prevents accidental overwrites during normal app updates.
+        if (!string.IsNullOrWhiteSpace(request.Slug) && request.Slug != app.Slug)
+            await _apps.UpdateSlugAsync(app.Id, request.Slug);
 
         var action = request.Status == "inactive" ? AdminAction.AppDeactivate : AdminAction.AppUpdate;
 
