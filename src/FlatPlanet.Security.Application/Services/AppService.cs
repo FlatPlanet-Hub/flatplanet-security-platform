@@ -86,6 +86,24 @@ public class AppService : IAppService
         return Map(app);
     }
 
+    public async Task DeleteAsync(Guid id)
+    {
+        var app = await _apps.GetByIdAsync(id)
+            ?? throw new KeyNotFoundException("App not found.");
+
+        if (app.Status != "inactive")
+            throw new InvalidOperationException("Only inactive apps can be hard-deleted. Deactivate the app first.");
+
+        await _adminAudit.LogAsync(
+            ActorContext.GetActorId(_httpContext), ActorContext.GetActorEmail(_httpContext), AdminAction.AppDelete,
+            "app", id,
+            new { app.Id, app.Name, app.Slug, app.Status },
+            null,
+            ActorContext.GetIpAddress(_httpContext));
+
+        await _apps.DeleteAsync(id);
+    }
+
     private static AppResponse Map(App a) => new()
     {
         Id           = a.Id,

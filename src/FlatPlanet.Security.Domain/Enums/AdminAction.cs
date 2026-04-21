@@ -13,4 +13,5 @@ public static class AdminAction
     public const string AppRegister   = "app.register";
     public const string AppUpdate     = "app.update";
     public const string AppDeactivate = "app.deactivate";
+    public const string AppDelete     = "app.delete";
 }

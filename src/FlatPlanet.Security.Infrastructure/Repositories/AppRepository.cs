@@ -60,6 +60,12 @@ public class AppRepository : IAppRepository
             "UPDATE apps SET name = @Name, base_url = @BaseUrl, status = @Status WHERE id = @Id", app);
     }
 
+    public async Task DeleteAsync(Guid id)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync("DELETE FROM apps WHERE id = @Id", new { Id = id });
+    }
+
     public async Task UpdateSlugAsync(Guid id, string newSlug)
     {
         using var conn = await _db.CreateConnectionAsync();

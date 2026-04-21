@@ -11,4 +11,5 @@ public interface IAppRepository
     Task<App> CreateAsync(App app);
     Task UpdateAsync(App app);
     Task UpdateSlugAsync(Guid id, string newSlug);
+    Task DeleteAsync(Guid id);
 }
