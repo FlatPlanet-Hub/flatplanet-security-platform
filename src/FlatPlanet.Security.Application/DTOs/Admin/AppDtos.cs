@@ -23,7 +23,7 @@ public class CreateAppRequest
 public class UpdateAppRequest
 {
     [Required]
-    [MaxLength(200)]
+    [MaxLength(250)]
     public string Name { get; set; } = string.Empty;
 
     /// <summary>
