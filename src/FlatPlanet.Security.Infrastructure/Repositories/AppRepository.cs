@@ -2,6 +2,7 @@ using Dapper;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Domain.Entities;
+using Npgsql;
 
 namespace FlatPlanet.Security.Infrastructure.Repositories;
 
@@ -57,5 +58,27 @@ public class AppRepository : IAppRepository
         using var conn = await _db.CreateConnectionAsync();
         await conn.ExecuteAsync(
             "UPDATE apps SET name = @Name, base_url = @BaseUrl, status = @Status WHERE id = @Id", app);
+    }
+
+    public async Task DeleteAsync(Guid id)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync("DELETE FROM apps WHERE id = @Id", new { Id = id });
+    }
+
+    public async Task UpdateSlugAsync(Guid id, string newSlug)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        try
+        {
+            await conn.ExecuteAsync(
+                "UPDATE apps SET slug = @Slug WHERE id = @Id",
+                new { Slug = newSlug, Id = id });
+        }
+        catch (PostgresException ex) when (ex.SqlState == "23505")
+        {
+            throw new InvalidOperationException(
+                $"An app with slug '{newSlug}' already exists.", ex);
+        }
     }
 }

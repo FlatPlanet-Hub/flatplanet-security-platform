@@ -62,11 +62,20 @@ public class AppService : IAppService
         var app = await _apps.GetByIdAsync(id)
             ?? throw new KeyNotFoundException("App not found.");
 
-        var before = new { app.Name, app.BaseUrl, app.Status };
-        app.Name    = request.Name;
-        app.BaseUrl = request.BaseUrl;
-        app.Status  = request.Status;
+        var before = new { app.Name, app.Slug, app.BaseUrl, app.Status };
+        app.Name   = request.Name;
+        app.Status = request.Status;
+        if (request.BaseUrl is not null)
+            app.BaseUrl = request.BaseUrl;
+
         await _apps.UpdateAsync(app);
+
+        // Slug update is separate — prevents accidental overwrites during normal app updates.
+        if (!string.IsNullOrWhiteSpace(request.Slug) && request.Slug != app.Slug)
+        {
+            await _apps.UpdateSlugAsync(app.Id, request.Slug);
+            app.Slug = request.Slug;
+        }
 
         var action = request.Status == "inactive" ? AdminAction.AppDeactivate : AdminAction.AppUpdate;
 
@@ -74,10 +83,28 @@ public class AppService : IAppService
             ActorContext.GetActorId(_httpContext), ActorContext.GetActorEmail(_httpContext), action,
             "app", id,
             before,
-            new { app.Name, app.BaseUrl, app.Status },
+            new { app.Name, app.Slug, app.BaseUrl, app.Status },
             ActorContext.GetIpAddress(_httpContext));
 
         return Map(app);
+    }
+
+    public async Task DeleteAsync(Guid id)
+    {
+        var app = await _apps.GetByIdAsync(id)
+            ?? throw new KeyNotFoundException("App not found.");
+
+        if (app.Status != "inactive")
+            throw new InvalidOperationException("Only inactive apps can be hard-deleted. Deactivate the app first.");
+
+        await _adminAudit.LogAsync(
+            ActorContext.GetActorId(_httpContext), ActorContext.GetActorEmail(_httpContext), AdminAction.AppDelete,
+            "app", id,
+            new { app.Id, app.Name, app.Slug, app.Status },
+            null,
+            ActorContext.GetIpAddress(_httpContext));
+
+        await _apps.DeleteAsync(id);
     }
 
     private static AppResponse Map(App a) => new()

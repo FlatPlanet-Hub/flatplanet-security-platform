@@ -8,4 +8,5 @@ public interface IAppService
     Task<AppResponse> GetByIdAsync(Guid id);
     Task<AppResponse> CreateAsync(CreateAppRequest request, Guid registeredBy);
     Task<AppResponse> UpdateAsync(Guid id, UpdateAppRequest request);
+    Task DeleteAsync(Guid id);
 }

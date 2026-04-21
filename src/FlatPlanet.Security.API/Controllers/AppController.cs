@@ -42,4 +42,11 @@ public class AppController : ApiController
         var result = await _apps.UpdateAsync(id, request);
         return OkData(result);
     }
+
+    [HttpDelete("{id:guid}")]
+    public async Task<IActionResult> Delete(Guid id)
+    {
+        await _apps.DeleteAsync(id);
+        return OkMessage("App permanently deleted.");
+    }
 }
