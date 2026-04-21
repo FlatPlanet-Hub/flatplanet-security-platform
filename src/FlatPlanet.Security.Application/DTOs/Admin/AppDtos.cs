@@ -39,9 +39,10 @@ public class UpdateAppRequest
     /// <summary>
     /// Optional — only provide when renaming the slug (e.g. on deactivation).
     /// Must be lowercase letters, digits, and hyphens only.
-    /// Max 150 chars to accommodate the -deleted-{yyyyMMddHHmmssfff} suffix appended on deactivation.
+    /// Max 300 chars — generous headroom for long project names plus the
+    /// -deleted-{yyyyMMddHHmmssfff} suffix appended on deactivation.
     /// </summary>
-    [MaxLength(150)]
+    [MaxLength(300)]
     [RegularExpression("^[a-z0-9-]+$", ErrorMessage = "Slug must contain only lowercase letters, digits, and hyphens.")]
     public string? Slug { get; set; }
 }

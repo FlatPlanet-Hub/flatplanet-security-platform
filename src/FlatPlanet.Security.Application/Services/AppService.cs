@@ -83,7 +83,7 @@ public class AppService : IAppService
             ActorContext.GetActorId(_httpContext), ActorContext.GetActorEmail(_httpContext), action,
             "app", id,
             before,
-            new { app.Name, app.BaseUrl, app.Status },
+            new { app.Name, app.Slug, app.BaseUrl, app.Status },
             ActorContext.GetIpAddress(_httpContext));
 
         return Map(app);
