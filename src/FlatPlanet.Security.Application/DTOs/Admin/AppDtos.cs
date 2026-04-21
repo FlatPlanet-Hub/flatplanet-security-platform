@@ -32,6 +32,14 @@ public class UpdateAppRequest
     [Required]
     [RegularExpression("^(active|suspended|inactive)$")]
     public string Status { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Optional — only provide when renaming the slug (e.g. on deactivation).
+    /// Must be lowercase letters, digits, and hyphens only.
+    /// </summary>
+    [MaxLength(120)]
+    [RegularExpression("^[a-z0-9-]+$", ErrorMessage = "Slug must contain only lowercase letters, digits, and hyphens.")]
+    public string? Slug { get; set; }
 }
 
 public class AppResponse

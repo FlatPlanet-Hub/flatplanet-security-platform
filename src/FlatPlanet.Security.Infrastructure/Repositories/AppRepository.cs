@@ -56,6 +56,6 @@ public class AppRepository : IAppRepository
     {
         using var conn = await _db.CreateConnectionAsync();
         await conn.ExecuteAsync(
-            "UPDATE apps SET name = @Name, base_url = @BaseUrl, status = @Status WHERE id = @Id", app);
+            "UPDATE apps SET name = @Name, slug = @Slug, base_url = @BaseUrl, status = @Status WHERE id = @Id", app);
     }
 }
