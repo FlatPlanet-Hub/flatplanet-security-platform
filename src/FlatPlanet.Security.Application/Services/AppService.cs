@@ -72,7 +72,10 @@ public class AppService : IAppService
 
         // Slug update is separate — prevents accidental overwrites during normal app updates.
         if (!string.IsNullOrWhiteSpace(request.Slug) && request.Slug != app.Slug)
+        {
             await _apps.UpdateSlugAsync(app.Id, request.Slug);
+            app.Slug = request.Slug;
+        }
 
         var action = request.Status == "inactive" ? AdminAction.AppDeactivate : AdminAction.AppUpdate;
 

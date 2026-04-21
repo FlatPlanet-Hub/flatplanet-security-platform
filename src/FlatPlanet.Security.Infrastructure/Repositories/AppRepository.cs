@@ -72,7 +72,7 @@ public class AppRepository : IAppRepository
         try
         {
             await conn.ExecuteAsync(
-                "UPDATE apps SET slug = @Slug WHERE id = @Id::uuid",
+                "UPDATE apps SET slug = @Slug WHERE id = @Id",
                 new { Slug = newSlug, Id = id });
         }
         catch (PostgresException ex) when (ex.SqlState == "23505")
