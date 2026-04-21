@@ -26,8 +26,11 @@ public class UpdateAppRequest
     [MaxLength(200)]
     public string Name { get; set; } = string.Empty;
 
+    /// <summary>
+    /// Optional — if null or omitted, the existing base URL is preserved.
+    /// </summary>
     [MaxLength(500)]
-    public string BaseUrl { get; set; } = string.Empty;
+    public string? BaseUrl { get; set; }
 
     [Required]
     [RegularExpression("^(active|suspended|inactive)$")]
@@ -36,8 +39,9 @@ public class UpdateAppRequest
     /// <summary>
     /// Optional — only provide when renaming the slug (e.g. on deactivation).
     /// Must be lowercase letters, digits, and hyphens only.
+    /// Max 150 chars to accommodate the -deleted-{yyyyMMddHHmmssfff} suffix appended on deactivation.
     /// </summary>
-    [MaxLength(120)]
+    [MaxLength(150)]
     [RegularExpression("^[a-z0-9-]+$", ErrorMessage = "Slug must contain only lowercase letters, digits, and hyphens.")]
     public string? Slug { get; set; }
 }

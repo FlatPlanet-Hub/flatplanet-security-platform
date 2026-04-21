@@ -63,11 +63,13 @@ public class AppService : IAppService
             ?? throw new KeyNotFoundException("App not found.");
 
         var before = new { app.Name, app.Slug, app.BaseUrl, app.Status };
-        app.Name    = request.Name;
-        app.BaseUrl = request.BaseUrl;
-        app.Status  = request.Status;
+        app.Name   = request.Name;
+        app.Status = request.Status;
+        if (request.BaseUrl is not null)
+            app.BaseUrl = request.BaseUrl;
         if (!string.IsNullOrWhiteSpace(request.Slug))
             app.Slug = request.Slug;
+
         await _apps.UpdateAsync(app);
 
         var action = request.Status == "inactive" ? AdminAction.AppDeactivate : AdminAction.AppUpdate;
