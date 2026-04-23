@@ -6,6 +6,7 @@ using FlatPlanet.Security.Application.DTOs.Mfa;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
+using FlatPlanet.Security.Domain.Constants;
 using FlatPlanet.Security.Domain.Entities;
 using FlatPlanet.Security.Domain.Enums;
 using Microsoft.Extensions.Caching.Memory;
@@ -150,7 +151,7 @@ public class MfaService : IMfaService
             throw new InvalidOperationException("TOTP is not enrolled for this account.");
 
         // BR-1: Status check — [AllowAnonymous] means no middleware protection on this endpoint.
-        if (user.Status != "active")
+        if (user.Status != EntityStatus.Active)
             throw new ForbiddenException($"User account is {user.Status}.");
 
         if (string.IsNullOrEmpty(user.MfaTotpSecret))
@@ -203,7 +204,7 @@ public class MfaService : IMfaService
             ?? throw new KeyNotFoundException("User not found.");
 
         // GAP-G2: Reject suspended/inactive users — this method can be called from multiple paths.
-        if (user.Status != "active")
+        if (user.Status != EntityStatus.Active)
             throw new ForbiddenException($"User account is {user.Status}.");
 
         var (expiryMinutes, otpLength) = await GetEmailOtpConfigAsync();
@@ -310,7 +311,7 @@ public class MfaService : IMfaService
         var user = await _users.GetByIdAsync(challenge.UserId)
             ?? throw new KeyNotFoundException("User not found.");
 
-        if (user.Status != "active")
+        if (user.Status != EntityStatus.Active)
             throw new ForbiddenException($"User account is {user.Status}.");
 
         await _challenges.MarkVerifiedAsync(challenge.Id);
@@ -373,7 +374,7 @@ public class MfaService : IMfaService
         if (!user.MfaTotpEnrolled)
             throw new InvalidOperationException("Backup codes are only available for TOTP-enrolled accounts.");
 
-        if (user.Status != "active")
+        if (user.Status != EntityStatus.Active)
             throw new ForbiddenException($"User account is {user.Status}.");
 
         var codeHash = _jwt.HashToken(backupCode.ToUpperInvariant());

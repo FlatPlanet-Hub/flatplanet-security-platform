@@ -4,6 +4,7 @@ using FlatPlanet.Security.Application.DTOs.Auth;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
+using FlatPlanet.Security.Domain.Constants;
 using FlatPlanet.Security.Domain.Entities;
 using FlatPlanet.Security.Domain.Enums;
 using Microsoft.Extensions.Caching.Memory;
@@ -114,12 +115,12 @@ public class LoginService : ILoginService
             throw new UnauthorizedAccessException("Invalid email or password.");
         }
 
-        if (user.Status != "active")
+        if (user.Status != EntityStatus.Active)
             throw new ForbiddenException($"User account is {user.Status}.");
 
         var company = await _companies.GetByIdAsync(user.CompanyId)
             ?? throw new UnauthorizedAccessException("Company not found.");
-        if (company.Status != "active")
+        if (company.Status != EntityStatus.Active)
             throw new ForbiddenException($"Company account is {company.Status}.");
 
         if (user.MfaEnabled)
@@ -307,7 +308,7 @@ public class LoginService : ILoginService
         var user = await _users.GetByIdAsync(stored.UserId)
             ?? throw new UnauthorizedAccessException("User not found.");
 
-        if (user.Status != "active")
+        if (user.Status != EntityStatus.Active)
             throw new ForbiddenException($"User account is {user.Status}.");
 
         var refreshExpiryDays = Cfg("jwt_refresh_expiry_days", 7);
