@@ -545,10 +545,10 @@ Committed and pushed to `main` → deployed via GitHub Actions (commit `07f73b8`
 
 ### Pending — Resume Next Session
 
-- [ ] **Apply `V26__app_cascade_delete.sql`** in Supabase SQL editor (project_security schema)
-- [ ] **Suite 2**: Retry `DELETE /api/v1/apps/ab20cdae-933c-4ed9-9243-b3ebf71a32e9` — should pass after V26
-- [ ] **Suite 3**: `POST /api/projects/7ff63aee.../sync-sp` recovery test
-- [ ] **Suite 4**: Edge cases — duplicate slug rejection, audit log verification
+- [x] **Apply `V26__app_cascade_delete.sql`** — user confirmed applied before this session
+- [x] **Suite 2**: `DELETE /api/v1/apps/ab20cdae` — ✅ PASSED (2026-04-23)
+- [x] **Suite 3**: `POST /api/projects/7ff63aee.../sync-sp` — ✅ PASSED (2026-04-23)
+- [x] **Suite 4**: Edge cases — ✅ PASSED (2026-04-23)
 
 ---
 
@@ -560,5 +560,66 @@ Committed and pushed to `main` → deployed via GitHub Actions (commit `07f73b8`
 | SP call is best-effort in `DeactivateProjectAsync` | HubApi deactivation must not fail if SP is down; `sync-sp` endpoint exists for recovery |
 | `ON DELETE SET NULL` for `sessions` + `auth_audit_log` | Audit records and sessions must survive app deletion; FK reference just becomes NULL |
 | `ON DELETE CASCADE` for `resources`, `roles`, `user_app_roles`, `permissions` | These are owned by the app — no reason to keep orphaned records |
+
+---
+
+---
+
+## Session: Project Deletion — Suites 2–4 + Gap Testing
+
+**Date**: 2026-04-23
+**Branch**: `main`
+
+---
+
+### What Was Done
+
+#### 1. Completed project deletion integration test (all 4 suites)
+
+**Test subject**: Cash Flow v2  
+- HubApi project ID: `7ff63aee-c9ad-4eda-920c-f426eddab98b`  
+- SP app ID: `ab20cdae-933c-4ed9-9243-b3ebf71a32e9`
+
+| Suite | Test | Result |
+|---|---|---|
+| Suite 1 | `DELETE /api/projects/7ff63aee` (HubApi soft-delete) | ✅ PASSED (prev session) |
+| Suite 2 | `DELETE /api/v1/apps/ab20cdae` (SP hard delete) | ✅ PASSED |
+| Suite 3 | `POST /api/projects/7ff63aee/sync-sp` (divergence recovery) | ✅ PASSED |
+| Suite 4a | SP app returns 404 after delete | ✅ PASSED |
+| Suite 4b | `app.delete` logged in admin audit log | ✅ PASSED |
+| Suite 4c | Slug `cash-flow-v2` reusable after hard delete | ✅ PASSED |
+
+**V26** was already applied to Supabase — V26 adds CASCADE/SET NULL FK rules that unblocked Suite 2.
+
+#### 2. GAP-TEST-2 — platform_owner has no bypass on `/api/v1/authorize` (CONFIRMED)
+
+`AuthorizationService.AuthorizeAsync` checks `user_app_roles` only. If the user has no role on the target app, it returns `Allowed = false` immediately — no platform_owner check, no role name check.
+
+**Impact**: `sync-sp` was 403 for Chris on the deactivated app because his roles were cleaned up. Workaround for test: granted Chris `owner` role via `POST /api/v1/apps/{appId}/users` (AdminAccess policy — platform_owner passes).
+
+**Severity**: P2 — admin recovery paths (sync-sp, similar ops endpoints) are unusable on deactivated projects where platform_owner was never explicitly assigned.
+
+#### 3. Minor bug noted — `POST /api/v1/apps` returns `registeredAt: 0001-01-01T00:00:00`
+
+The DTO is not populated from the DB after INSERT. The value is stored correctly — `PUT` responses and `GET` return the real timestamp. Only the create response is wrong.
+
+---
+
+### Decisions Made
+
+| Decision | Rationale |
+|---|---|
+| Granted Chris owner role via API (not raw SQL) | Tested the grant endpoint itself; confirmed AdminAccess policy works for platform_owner |
+| Suite 3 before Suite 2 | sync-sp requires the SP app to exist; hard delete must run last |
+| SP app manually set to active before Suite 3 | Needed diverged state to simulate real-world recovery scenario |
+
+---
+
+### Open Items
+
+- **GAP-TEST-2 (P2)** — add `platform_owner` bypass to `AuthorizationService.AuthorizeAsync` (coder task)
+- **Minor bug** — `POST /api/v1/apps` `registeredAt` returns `0001-01-01` (coder task, low priority)
+- **fp-development-hub GitHub branch** — `github_branch = 'master'` not `'main'` in DB
+- **Netlify auto-provisioning** — scoped, not built yet
 
 ---
