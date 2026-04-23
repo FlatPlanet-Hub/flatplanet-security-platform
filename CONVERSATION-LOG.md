@@ -623,3 +623,70 @@ The DTO is not populated from the DB after INSERT. The value is stored correctly
 - **Netlify auto-provisioning** — scoped, not built yet
 
 ---
+
+## Session: SOLID/DRY 7-Round Refactoring + Integration Verification
+
+**Date**: 2026-04-23
+**Branch**: `main` (all rounds committed directly)
+
+---
+
+### What Was Done
+
+#### 1. 7-Round SOLID/DRY Refactoring (Cloud)
+
+Full refactoring of the Security Platform application layer. Zero route/controller impact — no API URLs changed.
+
+| Round | Description | Files Changed |
+|---|---|---|
+| R1 | Extract `GenerateAndStoreResetTokenAsync` + `RevokeAllSessionsAsync` private helpers | `AuthService.cs` |
+| R2 | Centralize config loading: `ISecurityConfigRepository` → `ISecurityConfigService.GetAllCachedAsync()` (5-min IMemoryCache TTL, key `fp:sec:cfg:all`) | `AuthService.cs`, `MfaService.cs`, `SecurityConfigService.cs`, `ISecurityConfigService.cs` |
+| S1 (SRP split) | Explode `AuthService` (19 deps god class) into 3 focused services + thin facade | `AuthService.cs` (44-line facade), `LoginService.cs`, `PasswordService.cs`, `ProfileService.cs`, `ILoginService.cs`, `IPasswordService.cs`, `IProfileService.cs`, `IAuthService.cs` (union interface), `Program.cs` |
+| R4 | Extract `BuildLoginResponse` static helper in `MfaService` (replaced 4× duplicate blocks) | `MfaService.cs` |
+| DRY-5 (OCP) | Extract `ExceptionResponseMapper` static class from inline switch in middleware | `ExceptionHandlingMiddleware.cs`, `ExceptionResponseMapper.cs` (new) |
+| DRY-6 | Add `EntityStatus` constants domain class, replace 4× `!= "active"` literals | `EntityStatus.cs` (new), `MfaService.cs` |
+| DRY-7 | Extract `BuildToken` private helper in `JwtService` (deduplicate `IssueAccessTokenAsync` / `IssueEnrolmentTokenAsync`) | `JwtService.cs` |
+
+#### 2. ProfileService Missing Using — Build Fix
+
+`ProfileService.cs` was missing `using FlatPlanet.Security.Domain.Entities` — `AuthAuditLog` not found. Fixed immediately.
+
+#### 3. Test Suite Migration (AuthServiceTests → LoginServiceTests)
+
+`AuthServiceTests.cs` class renamed to `LoginServiceTests`. Mocks updated from `ISecurityConfigRepository` → `ISecurityConfigService`, `GetAllAsync` → `GetAllCachedAsync`, `List<SecurityConfig>` → `Dictionary<string,string>`.
+
+One stale setup missed in `Refresh_ShouldRotateToken_WhenValid` (used `_securityConfig.GetAllAsync` — old field, old method). Fixed and committed.
+
+**Final result: 66/66 unit tests passing.**
+
+#### 4. Yuffie Integration Smoke Tests (live SP)
+
+Deployed SP (pre-refactor build — no Azure CI/CD pipeline exists for this project):
+
+| Test | Endpoint | Result |
+|---|---|---|
+| SMOKE-01 | `POST /api/v1/auth/login` | ✅ PASS |
+| SMOKE-02 | `GET /api/v1/auth/me` | ✅ PASS |
+| SMOKE-03 | `POST /api/v1/auth/refresh` | ✅ PASS |
+| SMOKE-04 | `POST /api/v1/auth/logout` | ✅ PASS |
+
+---
+
+### Decisions Made
+
+| Decision | Rationale |
+|---|---|
+| Cache invalidation not added to `UpdateAsync` | Same behavior as before; 5-min TTL acceptable; not required |
+| All rounds committed to `main` directly | User approved push after gap/blast-radius review |
+| Union interface pattern for `IAuthService` | Controllers depend on single type; no DI changes needed at controller layer |
+
+---
+
+### Open Items (carried forward)
+
+- **SOLID refactor not yet deployed** — SP has no Azure CI/CD pipeline. Manual deploy needed to run refactored code in production.
+- **GAP-TEST-2 (P2)** — add `platform_owner` bypass to `AuthorizationService.AuthorizeAsync`
+- **Minor bug** — `POST /api/v1/apps` `registeredAt` returns `0001-01-01`
+- **fp-development-hub GitHub branch** — `github_branch = 'master'` not `'main'` in DB
+
+---
