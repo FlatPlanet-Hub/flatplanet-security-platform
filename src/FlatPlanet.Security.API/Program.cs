@@ -214,6 +214,9 @@ builder.Services.AddScoped<IIdentityVerificationRepository, IdentityVerification
 // Services
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
 builder.Services.AddScoped<IJwtService, JwtService>();
+builder.Services.AddScoped<ILoginService, LoginService>();
+builder.Services.AddScoped<IPasswordService, PasswordService>();
+builder.Services.AddScoped<IProfileService, ProfileService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IAccessAuthorizationService, AuthorizationService>();
 builder.Services.AddScoped<IUserContextService, UserContextService>();

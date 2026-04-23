@@ -8,12 +8,11 @@ using FlatPlanet.Security.Application.Services;
 using FlatPlanet.Security.Domain.Entities;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using Moq;
 
 namespace FlatPlanet.Security.Tests;
 
-public class AuthServiceTests
+public class LoginServiceTests
 {
     private readonly Mock<IPasswordHasher> _passwordHasher = new();
     private readonly Mock<IJwtService> _jwt = new();
@@ -28,25 +27,16 @@ public class AuthServiceTests
     private readonly Mock<IDbConnection> _conn = new();
     private readonly Mock<IDbTransaction> _tx = new();
     private readonly Mock<ICompanyRepository> _companies = new();
-    private readonly Mock<IUserContextService> _userContext = new();
-    private readonly Mock<IPasswordResetTokenRepository> _resetTokens = new();
-    private readonly Mock<IEmailService> _emailService = new();
-    private readonly Mock<IAppRepository> _apps = new();
     private readonly Mock<IMfaService> _mfa = new();
     private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
-    private readonly Mock<ILogger<AuthService>> _logger = new();
+    private readonly Mock<ILogger<LoginService>> _logger = new();
 
-    private AuthService CreateService() => new(
+    private LoginService CreateService() => new(
         _passwordHasher.Object, _jwt.Object, _users.Object,
         _sessions.Object, _refreshTokens.Object,
         _loginAttempts.Object, _auditLog.Object, _configService.Object,
-        _roles.Object, _db.Object, _companies.Object, _userContext.Object,
-        _resetTokens.Object, _emailService.Object, _apps.Object, _mfa.Object,
-        _cache, _logger.Object,
-        Options.Create(new FlatPlanet.Security.Application.Common.Options.AppOptions
-        {
-            BaseUrl = "https://localhost:3000"
-        }));
+        _roles.Object, _db.Object, _companies.Object, _mfa.Object,
+        _cache, _logger.Object);
 
     private void SetupDefaultConfig()
     {
