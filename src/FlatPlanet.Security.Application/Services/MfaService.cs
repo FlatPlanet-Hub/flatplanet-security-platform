@@ -119,8 +119,6 @@ public class MfaService : IMfaService
         await _identityVerification.SyncStatusAsync(userId, true);
 
         var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
-        int Cfg(string key, int def) =>
-            config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
         var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
@@ -137,21 +135,7 @@ public class MfaService : IMfaService
             _users.UpdateLastSeenAtAsync(user.Id, DateTime.UtcNow)
         );
 
-        return new LoginResponse
-        {
-            MfaEnrolled        = true,
-            AccessToken        = accessToken,
-            RefreshToken       = refreshTokenPlain,
-            ExpiresIn          = Cfg("jwt_access_expiry_minutes", 60) * 60,
-            IdleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30),
-            User               = new UserProfileDto
-            {
-                UserId    = user.Id,
-                Email     = user.Email,
-                FullName  = user.FullName,
-                CompanyId = user.CompanyId.ToString()
-            }
-        };
+        return BuildLoginResponse(user, accessToken, refreshTokenPlain, config, mfaEnrolled: true);
     }
 
     // ── TOTP Login ───────────────────────────────────────────────────────────
@@ -191,8 +175,6 @@ public class MfaService : IMfaService
         await _users.UpdateMfaTotpLastUsedStepAsync(userId, matchedStep);
 
         var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
-        int Cfg(string key, int def) =>
-            config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
         var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
@@ -210,20 +192,7 @@ public class MfaService : IMfaService
             _users.UpdateLastSeenAtAsync(user.Id, DateTime.UtcNow)
         );
 
-        return new LoginResponse
-        {
-            AccessToken        = accessToken,
-            RefreshToken       = refreshTokenPlain,
-            ExpiresIn          = Cfg("jwt_access_expiry_minutes", 60) * 60,
-            IdleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30),
-            User               = new UserProfileDto
-            {
-                UserId    = user.Id,
-                Email     = user.Email,
-                FullName  = user.FullName,
-                CompanyId = user.CompanyId.ToString()
-            }
-        };
+        return BuildLoginResponse(user, accessToken, refreshTokenPlain, config);
     }
 
     // ── Email OTP Login ──────────────────────────────────────────────────────
@@ -347,8 +316,6 @@ public class MfaService : IMfaService
         await _challenges.MarkVerifiedAsync(challenge.Id);
 
         var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
-        int Cfg(string key, int def) =>
-            config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
         var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
@@ -366,20 +333,7 @@ public class MfaService : IMfaService
             _users.UpdateLastSeenAtAsync(user.Id, DateTime.UtcNow)
         );
 
-        return new LoginResponse
-        {
-            AccessToken        = accessToken,
-            RefreshToken       = refreshTokenPlain,
-            ExpiresIn          = Cfg("jwt_access_expiry_minutes", 60) * 60,
-            IdleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30),
-            User               = new UserProfileDto
-            {
-                UserId    = user.Id,
-                Email     = user.Email,
-                FullName  = user.FullName,
-                CompanyId = user.CompanyId.ToString()
-            }
-        };
+        return BuildLoginResponse(user, accessToken, refreshTokenPlain, config);
     }
 
     // ── Backup Codes ─────────────────────────────────────────────────────────
@@ -434,8 +388,6 @@ public class MfaService : IMfaService
         await _backupCodes.MarkUsedAsync(stored.Id);
 
         var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
-        int Cfg(string key, int def) =>
-            config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
         var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
@@ -452,20 +404,7 @@ public class MfaService : IMfaService
             _users.UpdateLastSeenAtAsync(user.Id, DateTime.UtcNow)
         );
 
-        return new LoginResponse
-        {
-            AccessToken        = accessToken,
-            RefreshToken       = refreshTokenPlain,
-            ExpiresIn          = Cfg("jwt_access_expiry_minutes", 60) * 60,
-            IdleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30),
-            User               = new UserProfileDto
-            {
-                UserId    = user.Id,
-                Email     = user.Email,
-                FullName  = user.FullName,
-                CompanyId = user.CompanyId.ToString()
-            }
-        };
+        return BuildLoginResponse(user, accessToken, refreshTokenPlain, config);
     }
 
     // ── Status ───────────────────────────────────────────────────────────────
@@ -531,7 +470,30 @@ public class MfaService : IMfaService
             _auditLog.LogAsync(new AuthAuditLog { UserId = userId, EventType = AuditEventType.MfaReset }));
     }
 
-    // ── Shared session factory ───────────────────────────────────────────────
+    // ── Shared helpers ───────────────────────────────────────────────────────
+
+    private static LoginResponse BuildLoginResponse(
+        User user, string accessToken, string refreshToken,
+        Dictionary<string, string> config, bool mfaEnrolled = false)
+    {
+        static int Cfg(Dictionary<string, string> c, string key, int def) =>
+            c.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
+        return new LoginResponse
+        {
+            MfaEnrolled        = mfaEnrolled,
+            AccessToken        = accessToken,
+            RefreshToken       = refreshToken,
+            ExpiresIn          = Cfg(config, "jwt_access_expiry_minutes", 60) * 60,
+            IdleTimeoutMinutes = Cfg(config, "session_idle_timeout_minutes", 30),
+            User = new UserProfileDto
+            {
+                UserId    = user.Id,
+                Email     = user.Email,
+                FullName  = user.FullName,
+                CompanyId = user.CompanyId.ToString()
+            }
+        };
+    }
 
     private async Task<(Session session, string refreshTokenPlain, Dictionary<string, string> config)> CreateSessionInTransactionAsync(
         Guid userId, string? ipAddress, string? userAgent)
