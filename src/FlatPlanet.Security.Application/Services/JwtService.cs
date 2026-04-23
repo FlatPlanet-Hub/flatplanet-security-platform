@@ -24,9 +24,6 @@ public class JwtService : IJwtService
 
     public async Task<string> IssueAccessTokenAsync(User user, Guid sessionId, IEnumerable<string> roles)
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.SecretKey));
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
         var claims = new List<Claim>
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
@@ -49,22 +46,11 @@ public class JwtService : IJwtService
             claims.Add(new Claim("business_ids", m.CompanyId.ToString()));
         }
 
-        var token = new JwtSecurityToken(
-            issuer: _options.Issuer,
-            audience: _options.Audience,
-            claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(_options.AccessTokenExpiryMinutes),
-            signingCredentials: credentials
-        );
-
-        return new JwtSecurityTokenHandler().WriteToken(token);
+        return BuildToken(claims, _options.AccessTokenExpiryMinutes);
     }
 
     public async Task<string> IssueEnrolmentTokenAsync(User user, Guid sessionId)
     {
-        var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.SecretKey));
-        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
-
         var claims = new List<Claim>
         {
             new Claim(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
@@ -79,16 +65,22 @@ public class JwtService : IJwtService
         };
 
         // No roles, no business memberships — user has not yet proven MFA
+        // Suppress CS1998 — kept async to match the interface signature
+        await Task.CompletedTask;
+        return BuildToken(claims, expiryMinutes: 10);
+    }
+
+    private string BuildToken(IEnumerable<Claim> claims, int expiryMinutes)
+    {
+        var key         = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_options.SecretKey));
+        var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
         var token = new JwtSecurityToken(
             issuer: _options.Issuer,
             audience: _options.Audience,
             claims: claims,
-            expires: DateTime.UtcNow.AddMinutes(10),
+            expires: DateTime.UtcNow.AddMinutes(expiryMinutes),
             signingCredentials: credentials
         );
-
-        // Suppress CS1998 — kept async to match the interface signature
-        await Task.CompletedTask;
         return new JwtSecurityTokenHandler().WriteToken(token);
     }
 
