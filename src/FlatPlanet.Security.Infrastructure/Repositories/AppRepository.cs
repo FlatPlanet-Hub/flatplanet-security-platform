@@ -43,14 +43,12 @@ public class AppRepository : IAppRepository
     public async Task<App> CreateAsync(App app)
     {
         using var conn = await _db.CreateConnectionAsync();
-        var id = await conn.QuerySingleAsync<Guid>(
+        return await conn.QuerySingleAsync<App>(
             """
             INSERT INTO apps (company_id, name, slug, base_url, registered_by)
             VALUES (@CompanyId, @Name, @Slug, @BaseUrl, @RegisteredBy)
-            RETURNING id
+            RETURNING *
             """, app);
-        app.Id = id;
-        return app;
     }
 
     public async Task UpdateAsync(App app)
