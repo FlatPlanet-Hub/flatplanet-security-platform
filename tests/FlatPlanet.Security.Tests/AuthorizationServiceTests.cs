@@ -141,4 +141,32 @@ public class AuthorizationServiceTests
         // Assert
         Assert.False(result.Allowed);
     }
+
+    [Fact]
+    public async Task Authorize_ShouldBypassRoleCheck_WhenPlatformOwner()
+    {
+        // Arrange — user has no user_app_roles entry, but is platform_owner
+        _apps.Setup(a => a.GetBySlugAsync("my-app"))
+            .ReturnsAsync(new App { Id = _appId, Slug = "my-app", Name = "My App" });
+
+        _securityConfig.Setup(c => c.GetValueAsync("audit_log_authorize_allowed"))
+            .ReturnsAsync("true");
+
+        _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
+
+        var service = CreateService();
+
+        // Act
+        var result = await service.AuthorizeAsync(_userId, new AuthorizeRequest
+        {
+            AppSlug = "my-app",
+            ResourceIdentifier = "doc/123",
+            RequiredPermission = "any:permission"
+        }, null, isPlatformOwner: true);
+
+        // Assert
+        Assert.True(result.Allowed);
+        Assert.Contains("platform_owner", result.Roles);
+        _userAppRoles.Verify(u => u.GetActiveByUserAndAppAsync(It.IsAny<Guid>(), It.IsAny<Guid>()), Times.Never);
+    }
 }

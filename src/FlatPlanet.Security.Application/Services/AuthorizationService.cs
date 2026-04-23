@@ -36,10 +36,17 @@ public class AuthorizationService : IAccessAuthorizationService
         _cache = cache;
     }
 
-    public async Task<AuthorizeResponse> AuthorizeAsync(Guid userId, AuthorizeRequest request, string? ipAddress)
+    public async Task<AuthorizeResponse> AuthorizeAsync(Guid userId, AuthorizeRequest request, string? ipAddress, bool isPlatformOwner = false)
     {
         var app = await _apps.GetBySlugAsync(request.AppSlug)
             ?? throw new KeyNotFoundException($"App '{request.AppSlug}' not found.");
+
+        if (isPlatformOwner)
+        {
+            var bypass = new AuthorizeResponse { Allowed = true, Roles = ["platform_owner"], Permissions = [] };
+            await LogAuthCheckAsync(userId, request, app.Id, ipAddress, allowed: true);
+            return bypass;
+        }
 
         // Check cache first (allowed=true results only — denied is never cached)
         var cacheKey = $"fp:sec:authz:{userId}:{request.AppSlug}:{request.RequiredPermission}";

@@ -30,7 +30,7 @@ public class AuthorizeController : ApiController
 
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
 
-        var result = await _authorizationService.AuthorizeAsync(userId, request, ipAddress);
+        var result = await _authorizationService.AuthorizeAsync(userId, request, ipAddress, User.IsInRole("platform_owner"));
         return OkData(result);
     }
 }
