@@ -267,10 +267,10 @@ public class LoginServiceTests
         var userId = Guid.NewGuid();
         var tokenId = Guid.NewGuid();
 
-        _securityConfig.Setup(s => s.GetAllAsync()).ReturnsAsync(new List<SecurityConfig>
+        _configService.Setup(s => s.GetAllCachedAsync()).ReturnsAsync(new Dictionary<string, string>
         {
-            new() { ConfigKey = "jwt_refresh_expiry_days", ConfigValue = "7" },
-            new() { ConfigKey = "jwt_access_expiry_minutes", ConfigValue = "60" }
+            ["jwt_refresh_expiry_days"]   = "7",
+            ["jwt_access_expiry_minutes"] = "60"
         });
 
         _jwt.Setup(j => j.HashToken("valid-token")).Returns("valid-hash");
