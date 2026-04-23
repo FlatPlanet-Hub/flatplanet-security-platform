@@ -23,7 +23,7 @@ public class AuthService : IAuthService
     private readonly IRefreshTokenRepository _refreshTokens;
     private readonly ILoginAttemptRepository _loginAttempts;
     private readonly IAuditLogRepository _auditLog;
-    private readonly ISecurityConfigRepository _securityConfig;
+    private readonly ISecurityConfigService _configService;
     private readonly IRoleRepository _roles;
     private readonly IDbConnectionFactory _db;
     private readonly ICompanyRepository _companies;
@@ -44,7 +44,7 @@ public class AuthService : IAuthService
         IRefreshTokenRepository refreshTokens,
         ILoginAttemptRepository loginAttempts,
         IAuditLogRepository auditLog,
-        ISecurityConfigRepository securityConfig,
+        ISecurityConfigService configService,
         IRoleRepository roles,
         IDbConnectionFactory db,
         ICompanyRepository companies,
@@ -64,7 +64,7 @@ public class AuthService : IAuthService
         _refreshTokens = refreshTokens;
         _loginAttempts = loginAttempts;
         _auditLog = auditLog;
-        _securityConfig = securityConfig;
+        _configService = configService;
         _roles = roles;
         _db = db;
         _companies = companies;
@@ -82,7 +82,7 @@ public class AuthService : IAuthService
     {
         var now = DateTime.UtcNow;
 
-        var config = await LoadConfigAsync();
+        var config = await _configService.GetAllCachedAsync();
         int Cfg(string key, int def) =>
             config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
@@ -311,7 +311,7 @@ public class AuthService : IAuthService
 
     public async Task<RefreshResponse> RefreshAsync(RefreshRequest request, string? ipAddress)
     {
-        var config = await LoadConfigAsync();
+        var config = await _configService.GetAllCachedAsync();
         int Cfg(string key, int def) =>
             config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
@@ -729,20 +729,4 @@ public class AuthService : IAuthService
             _cache.Remove($"fp:sec:session:{sid}");
     }
 
-    private async Task<Dictionary<string, string>> LoadConfigAsync()
-    {
-        const string cacheKey = "fp:sec:cfg:all";
-        if (_cache.TryGetValue(cacheKey, out Dictionary<string, string>? cached) && cached is not null)
-            return cached;
-
-        var configs = await _securityConfig.GetAllAsync();
-        var dict = configs.ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
-
-        _cache.Set(cacheKey, dict, new MemoryCacheEntryOptions
-        {
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
-        });
-
-        return dict;
-    }
 }

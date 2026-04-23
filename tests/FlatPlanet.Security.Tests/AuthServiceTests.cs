@@ -22,7 +22,7 @@ public class AuthServiceTests
     private readonly Mock<IRefreshTokenRepository> _refreshTokens = new();
     private readonly Mock<ILoginAttemptRepository> _loginAttempts = new();
     private readonly Mock<IAuditLogRepository> _auditLog = new();
-    private readonly Mock<ISecurityConfigRepository> _securityConfig = new();
+    private readonly Mock<ISecurityConfigService> _configService = new();
     private readonly Mock<IRoleRepository> _roles = new();
     private readonly Mock<IDbConnectionFactory> _db = new();
     private readonly Mock<IDbConnection> _conn = new();
@@ -39,7 +39,7 @@ public class AuthServiceTests
     private AuthService CreateService() => new(
         _passwordHasher.Object, _jwt.Object, _users.Object,
         _sessions.Object, _refreshTokens.Object,
-        _loginAttempts.Object, _auditLog.Object, _securityConfig.Object,
+        _loginAttempts.Object, _auditLog.Object, _configService.Object,
         _roles.Object, _db.Object, _companies.Object, _userContext.Object,
         _resetTokens.Object, _emailService.Object, _apps.Object, _mfa.Object,
         _cache, _logger.Object,
@@ -50,19 +50,19 @@ public class AuthServiceTests
 
     private void SetupDefaultConfig()
     {
-        var configs = new List<SecurityConfig>
+        var dict = new Dictionary<string, string>
         {
-            new() { ConfigKey = "rate_limit_login_per_ip_per_minute", ConfigValue = "5" },
-            new() { ConfigKey = "rate_limit_login_per_email_per_minute", ConfigValue = "10" },
-            new() { ConfigKey = "max_failed_login_attempts", ConfigValue = "5" },
-            new() { ConfigKey = "lockout_duration_minutes", ConfigValue = "30" },
-            new() { ConfigKey = "max_concurrent_sessions", ConfigValue = "3" },
-            new() { ConfigKey = "session_absolute_timeout_minutes", ConfigValue = "480" },
-            new() { ConfigKey = "session_idle_timeout_minutes", ConfigValue = "30" },
-            new() { ConfigKey = "jwt_refresh_expiry_days", ConfigValue = "7" },
-            new() { ConfigKey = "jwt_access_expiry_minutes", ConfigValue = "60" },
+            ["rate_limit_login_per_ip_per_minute"]    = "5",
+            ["rate_limit_login_per_email_per_minute"] = "10",
+            ["max_failed_login_attempts"]             = "5",
+            ["lockout_duration_minutes"]              = "30",
+            ["max_concurrent_sessions"]               = "3",
+            ["session_absolute_timeout_minutes"]      = "480",
+            ["session_idle_timeout_minutes"]          = "30",
+            ["jwt_refresh_expiry_days"]               = "7",
+            ["jwt_access_expiry_minutes"]             = "60",
         };
-        _securityConfig.Setup(s => s.GetAllAsync()).ReturnsAsync(configs);
+        _configService.Setup(s => s.GetAllCachedAsync()).ReturnsAsync(dict);
     }
 
     private void SetupTransaction()

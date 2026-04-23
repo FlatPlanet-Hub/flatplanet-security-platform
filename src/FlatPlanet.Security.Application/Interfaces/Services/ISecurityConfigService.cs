@@ -6,4 +6,5 @@ public interface ISecurityConfigService
 {
     Task<IEnumerable<SecurityConfig>> GetAllAsync();
     Task UpdateAsync(string key, string value, Guid updatedBy);
+    Task<Dictionary<string, string>> GetAllCachedAsync();
 }

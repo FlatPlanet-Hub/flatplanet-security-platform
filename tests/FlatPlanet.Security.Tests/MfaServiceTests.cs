@@ -16,7 +16,7 @@ public class MfaServiceTests
     private readonly Mock<IMfaChallengeRepository> _challenges = new();
     private readonly Mock<IUserRepository> _users = new();
     private readonly Mock<IEmailService> _email = new();
-    private readonly Mock<ISecurityConfigRepository> _securityConfig = new();
+    private readonly Mock<ISecurityConfigService> _configService = new();
     private readonly Mock<IJwtService> _jwt = new();
     private readonly Mock<IAuditLogRepository> _auditLog = new();
     private readonly Mock<ISessionRepository> _sessions = new();
@@ -34,7 +34,7 @@ public class MfaServiceTests
 
     private MfaService CreateService() => new(
         _challenges.Object, _users.Object, _email.Object,
-        _securityConfig.Object, _jwt.Object, _auditLog.Object,
+        _configService.Object, _jwt.Object, _auditLog.Object,
         _sessions.Object, _refreshTokens.Object, _roles.Object,
         _db.Object, _identityVerification.Object, _encryptor.Object,
         _totpVerifier.Object, _backupCodes.Object, _cache, _logger.Object);
@@ -63,8 +63,7 @@ public class MfaServiceTests
         foreach (var (k, v) in overrides)
             defaults[k] = v;
 
-        _securityConfig.Setup(s => s.GetAllAsync()).ReturnsAsync(
-            defaults.Select(kv => new SecurityConfig { ConfigKey = kv.Key, ConfigValue = kv.Value }).ToList());
+        _configService.Setup(s => s.GetAllCachedAsync()).ReturnsAsync(defaults);
     }
 
     // ── BeginTotpEnrolmentAsync ──────────────────────────────────────────────

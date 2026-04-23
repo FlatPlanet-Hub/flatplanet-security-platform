@@ -19,7 +19,7 @@ public class MfaService : IMfaService
     private readonly IMfaChallengeRepository _challenges;
     private readonly IUserRepository _users;
     private readonly IEmailService _email;
-    private readonly ISecurityConfigRepository _securityConfig;
+    private readonly ISecurityConfigService _configService;
     private readonly IJwtService _jwt;
     private readonly IAuditLogRepository _auditLog;
     private readonly ISessionRepository _sessions;
@@ -37,7 +37,7 @@ public class MfaService : IMfaService
         IMfaChallengeRepository challenges,
         IUserRepository users,
         IEmailService email,
-        ISecurityConfigRepository securityConfig,
+        ISecurityConfigService configService,
         IJwtService jwt,
         IAuditLogRepository auditLog,
         ISessionRepository sessions,
@@ -54,7 +54,7 @@ public class MfaService : IMfaService
         _challenges = challenges;
         _users = users;
         _email = email;
-        _securityConfig = securityConfig;
+        _configService = configService;
         _jwt = jwt;
         _auditLog = auditLog;
         _sessions = sessions;
@@ -536,7 +536,7 @@ public class MfaService : IMfaService
     private async Task<(Session session, string refreshTokenPlain, Dictionary<string, string> config)> CreateSessionInTransactionAsync(
         Guid userId, string? ipAddress, string? userAgent)
     {
-        var config = await LoadConfigAsync();
+        var config = await _configService.GetAllCachedAsync();
         int Cfg(string key, int def) =>
             config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
@@ -590,26 +590,9 @@ public class MfaService : IMfaService
 
     // ── Helpers ──────────────────────────────────────────────────────────────
 
-    private async Task<Dictionary<string, string>> LoadConfigAsync()
-    {
-        const string cacheKey = "fp:sec:cfg:all";
-        if (_cache.TryGetValue(cacheKey, out Dictionary<string, string>? cached) && cached is not null)
-            return cached;
-
-        var configs = await _securityConfig.GetAllAsync();
-        var dict = configs.ToDictionary(c => c.ConfigKey, c => c.ConfigValue);
-
-        _cache.Set(cacheKey, dict, new Microsoft.Extensions.Caching.Memory.MemoryCacheEntryOptions
-        {
-            AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(5)
-        });
-
-        return dict;
-    }
-
     private async Task<(int expiryMinutes, int otpLength)> GetEmailOtpConfigAsync()
     {
-        var config = await LoadConfigAsync();
+        var config = await _configService.GetAllCachedAsync();
         int Cfg(string key, int def) =>
             config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
         return (Cfg("mfa_email_otp_expiry_minutes", 10), Cfg("mfa_otp_length", 6));
@@ -618,14 +601,14 @@ public class MfaService : IMfaService
     private async Task<int> GetMaxAttemptsAsync()
     {
         // I-2: Use shared config cache instead of a per-key lookup with a separate cache entry.
-        var config = await LoadConfigAsync();
+        var config = await _configService.GetAllCachedAsync();
         return config.TryGetValue("mfa_max_otp_attempts", out var v) && int.TryParse(v, out var n) ? n : 5;
     }
 
     private async Task<string> GetTotpIssuerAsync()
     {
         // I-2: Use shared config cache instead of a per-key lookup with a separate cache entry.
-        var config = await LoadConfigAsync();
+        var config = await _configService.GetAllCachedAsync();
         return config.TryGetValue("mfa_totp_issuer", out var v) ? v : "FlatPlanet";
     }
 
