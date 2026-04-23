@@ -456,13 +456,7 @@ public class AuthService : IAuthService
 
         try
         {
-            var activeSessionIds = await _sessions.GetActiveSessionIdsByUserAsync(userId);
-            await Task.WhenAll(
-                _sessions.EndAllActiveSessionsByUserAsync(userId, "password_changed"),
-                _refreshTokens.RevokeAllByUserAsync(userId, "password_changed")
-            );
-            foreach (var sid in activeSessionIds)
-                _cache.Remove($"fp:sec:session:{sid}");
+            await RevokeAllSessionsAsync(userId, "password_changed");
         }
         catch (Exception ex)
         {
@@ -523,13 +517,7 @@ public class AuthService : IAuthService
             // cannot be used after the email change. User must log in again.
             try
             {
-                var activeSessionIds = await _sessions.GetActiveSessionIdsByUserAsync(userId);
-                await Task.WhenAll(
-                    _sessions.EndAllActiveSessionsByUserAsync(userId, "email_changed"),
-                    _refreshTokens.RevokeAllByUserAsync(userId, "email_changed")
-                );
-                foreach (var sid in activeSessionIds)
-                    _cache.Remove($"fp:sec:session:{sid}");
+                await RevokeAllSessionsAsync(userId, "email_changed");
             }
             catch (Exception ex)
             {
@@ -572,18 +560,7 @@ public class AuthService : IAuthService
 
         try
         {
-            var plain = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-            var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(plain))).ToLowerInvariant();
-
-            await _resetTokens.InvalidatePendingByUserAsync(user.Id);
-            await _resetTokens.CreateAsync(new PasswordResetToken
-            {
-                UserId = user.Id,
-                TokenHash = hash,
-                ExpiresAt = DateTime.UtcNow.AddMinutes(15)
-            });
-
-            var link = $"{baseUrl}/reset-password?token={plain}";
+            var link = await GenerateAndStoreResetTokenAsync(user, baseUrl);
 
             try
             {
@@ -624,18 +601,7 @@ public class AuthService : IAuthService
         if (string.IsNullOrWhiteSpace(baseUrl))
             throw new InvalidOperationException("AppOptions.BaseUrl is not configured.");
 
-        var plain = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
-        var hash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(plain))).ToLowerInvariant();
-
-        await _resetTokens.InvalidatePendingByUserAsync(user.Id);
-        await _resetTokens.CreateAsync(new PasswordResetToken
-        {
-            UserId    = user.Id,
-            TokenHash = hash,
-            ExpiresAt = DateTime.UtcNow.AddMinutes(15)
-        });
-
-        var link = $"{baseUrl}/reset-password?token={plain}";
+        var link = await GenerateAndStoreResetTokenAsync(user, baseUrl);
 
         try
         {
@@ -716,13 +682,7 @@ public class AuthService : IAuthService
 
         try
         {
-            var activeSessionIds = await _sessions.GetActiveSessionIdsByUserAsync(token.UserId);
-            await Task.WhenAll(
-                _sessions.EndAllActiveSessionsByUserAsync(token.UserId, "password_reset"),
-                _refreshTokens.RevokeAllByUserAsync(token.UserId, "password_reset")
-            );
-            foreach (var sid in activeSessionIds)
-                _cache.Remove($"fp:sec:session:{sid}");
+            await RevokeAllSessionsAsync(token.UserId, "password_reset");
         }
         catch (Exception ex)
         {
@@ -742,6 +702,31 @@ public class AuthService : IAuthService
         {
             _logger.LogError(ex, "Audit log failed for PasswordResetCompleted user {UserId}", token.UserId);
         }
+    }
+
+    private async Task<string> GenerateAndStoreResetTokenAsync(User user, string baseUrl)
+    {
+        var plain = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)).ToLowerInvariant();
+        var hash  = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(plain))).ToLowerInvariant();
+        await _resetTokens.InvalidatePendingByUserAsync(user.Id);
+        await _resetTokens.CreateAsync(new PasswordResetToken
+        {
+            UserId    = user.Id,
+            TokenHash = hash,
+            ExpiresAt = DateTime.UtcNow.AddMinutes(15)
+        });
+        return $"{baseUrl}/reset-password?token={plain}";
+    }
+
+    private async Task RevokeAllSessionsAsync(Guid userId, string reason)
+    {
+        var activeSessionIds = await _sessions.GetActiveSessionIdsByUserAsync(userId);
+        await Task.WhenAll(
+            _sessions.EndAllActiveSessionsByUserAsync(userId, reason),
+            _refreshTokens.RevokeAllByUserAsync(userId, reason)
+        );
+        foreach (var sid in activeSessionIds)
+            _cache.Remove($"fp:sec:session:{sid}");
     }
 
     private async Task<Dictionary<string, string>> LoadConfigAsync()
