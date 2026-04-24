@@ -14,6 +14,7 @@ public interface ISessionRepository
     Task EndAllActiveSessionsByUserAsync(Guid userId, string reason);
     Task EndAllActiveSessionsByUserAsync(Guid userId, string reason, IDbConnection conn, IDbTransaction tx);
     Task UpdateLastActiveAtAsync(Guid sessionId, DateTime lastActiveAt);
+    Task ReactivateAsync(Guid sessionId, DateTime lastActiveAt);
     Task<IEnumerable<Guid>> GetActiveSessionIdsByUserAsync(Guid userId);
     Task<IEnumerable<Session>> GetAllByUserIdAsync(Guid userId);
     Task EvictOldestIfOverLimitAsync(Guid userId, int maxSessions, IDbConnection conn, IDbTransaction tx);

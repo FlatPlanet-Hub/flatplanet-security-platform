@@ -340,8 +340,12 @@ public class LoginService : ILoginService
             }
         }
 
+        // Reactivate the session — covers the case where idle timeout fired but the
+        // refresh token is still valid (e.g. always-on dashboard). Without this,
+        // the new access token would be immediately rejected by SessionValidationMiddleware
+        // because is_active = false on the dead session row.
         if (stored.SessionId.HasValue)
-            await _sessions.UpdateLastActiveAtAsync(stored.SessionId.Value, DateTime.UtcNow);
+            await _sessions.ReactivateAsync(stored.SessionId.Value, DateTime.UtcNow);
 
         var sessionId          = stored.SessionId ?? Guid.Empty;
         var platformRoles      = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
