@@ -103,6 +103,14 @@ public class SessionRepository : ISessionRepository
             new { LastActiveAt = lastActiveAt, Id = sessionId });
     }
 
+    public async Task ReactivateAsync(Guid sessionId, DateTime lastActiveAt)
+    {
+        using var conn = await _db.CreateConnectionAsync();
+        await conn.ExecuteAsync(
+            "UPDATE sessions SET is_active = true, ended_reason = NULL, last_active_at = @LastActiveAt WHERE id = @Id",
+            new { LastActiveAt = lastActiveAt, Id = sessionId });
+    }
+
     public async Task<IEnumerable<Guid>> GetActiveSessionIdsByUserAsync(Guid userId)
     {
         using var conn = await _db.CreateConnectionAsync();
