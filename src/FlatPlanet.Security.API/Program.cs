@@ -48,7 +48,9 @@ try
     await using var tempConn = new Npgsql.NpgsqlConnection(dbOptions.BuildConnectionString());
     dbOrigins = (await Dapper.SqlMapper.QueryAsync<string>(
         tempConn,
-        "SELECT DISTINCT base_url FROM apps WHERE status = 'active' AND base_url IS NOT NULL AND base_url <> ''"))
+        new Dapper.CommandDefinition(
+            "SELECT DISTINCT base_url FROM apps WHERE status = 'active' AND base_url IS NOT NULL AND base_url <> ''",
+            commandTimeout: 10)))
         .ToArray();
 }
 catch (Exception ex)
