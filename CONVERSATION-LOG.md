@@ -661,7 +661,7 @@ One stale setup missed in `Refresh_ShouldRotateToken_WhenValid` (used `_security
 
 #### 4. Yuffie Integration Smoke Tests (live SP)
 
-Deployed SP (pre-refactor build — no Azure CI/CD pipeline exists for this project):
+Deployed SP (auto-deployed via `.github/workflows/deploy.yml` on push to main — refactored build is live):
 
 | Test | Endpoint | Result |
 |---|---|---|
@@ -688,5 +688,77 @@ Deployed SP (pre-refactor build — no Azure CI/CD pipeline exists for this proj
 - **GAP-TEST-2 (P2)** — add `platform_owner` bypass to `AuthorizationService.AuthorizeAsync`
 - **Minor bug** — `POST /api/v1/apps` `registeredAt` returns `0001-01-01`
 - **fp-development-hub GitHub branch** — `github_branch = 'master'` not `'main'` in DB
+
+---
+
+## Session: Linux Provisioner Bug Fixes + Platform Owner Grants
+
+**Date**: 2026-04-29
+**Branches**: `main` (both repos — committed directly)
+
+---
+
+### What Was Done
+
+#### 1. AzureAppServiceProvisioner.cs — Linux Runtime Fix (HubApi, P1)
+
+`AzureAppServiceProvisioner.cs` was setting `WindowsFxVersion = "DOTNET|10.0"` and `NetFrameworkVersion = "v10.0"` — both are Windows-only properties. The FPPlatform resource group uses a **Linux** App Service Plan, causing provisioned apps to load a PHP container and fail with `dotnet: not found`.
+
+**Fix (commit `7fda719`):**
+- Replaced with `LinuxFxVersion = "DOTNETCORE|10.0"`
+- Removed `WindowsFxVersion` and `NetFrameworkVersion`
+- Added `ASPNETCORE_URLS = http://0.0.0.0:8080` and `ASPNETCORE_ENVIRONMENT = Production` to app settings dict (missing values caused crash-loop: .NET binds :5000, Azure probes :8080, 230s timeout)
+
+#### 2. Retroactive az CLI Patch — 6 Existing App Services (P1)
+
+All 6 provisioned App Services were missing `ASPNETCORE_URLS`. 4 were also missing `LinuxFxVersion`. Patched live via `az webapp config appsettings set` and `az webapp config set`:
+- `compliq-api`, `fp-esignature-api`, `iso-audit-readiness-api`, `learning-management-system-program-api`, `mayari-api`, `online-competency-assessment-tool-api`
+
+Azure DNS was unavailable during the patch session — patch is pending execution when connectivity is restored.
+
+#### 3. SP Startup CORS Query Timeout (commit `d39339b`, P2)
+
+`Program.cs` startup CORS DB query had no timeout — a slow DB at boot would hang the entire app indefinitely. Fixed by wrapping in `Dapper.CommandDefinition` with `commandTimeout: 10`. Existing `catch` block handles timeout gracefully (falls back to config-only origins).
+
+#### 4. Post-Deploy Health Checks — Both deploy.yml Files (commit `d39339b` + `7fda719`, P2)
+
+Both GitHub Actions workflows were missing a post-deploy health check. Added `curl --retry 6 --retry-delay 10 -f /health` step after each deploy (20s warmup, 80s total window). Both repos confirmed to have `MapHealthChecks("/health")` wired up.
+
+#### 5. Bug Report Filed
+
+`docs/bug-report-2026-04-28-linux-provisioner.md` created in platform-api repo (commit `b305e1f`). Documents all 4 bugs with root cause, impact, fix, and commit references.
+
+#### 6. Platform Owner Grants
+
+`erick.reyes@flatplanet.com` and `johnloyd.buenaventura@flatplanet.com` granted `platform_owner` role on `dashboard-hub` app via SP service token. John Lloyd upgraded from `User` → `platform_owner`. Both require re-login to get updated JWT.
+
+- platform_owner role ID: `acb3cad4-16e5-48d2-8fda-208774730e84`
+- SP service token used: `ServiceToken__Token` from Azure App Service config (retrieved via az CLI)
+- SP service token header format: `Authorization: Bearer <token>` (NOT `ServiceToken <token>`)
+
+#### 7. GAP-TEST-2 — Found Already Closed
+
+Checked `AuthorizationService.cs` — platform_owner bypass (lines 44-49) and `AuthorizeController` passing `User.IsInRole("platform_owner")` were already in place (commit `7f8f954`, prior session). GAP-TEST-2 is closed.
+
+---
+
+### Commits
+
+| Repo | Commit | Description |
+|---|---|---|
+| `platform-api` | `7fda719` | fix: Linux provisioner — LinuxFxVersion, ASPNETCORE_URLS, post-deploy health check |
+| `platform-api` | `b305e1f` | docs: bug report 2026-04-28 |
+| `flatplanet-security-platform` | `d39339b` | fix: startup CORS query timeout + post-deploy health check |
+
+---
+
+### Open Items (carried forward)
+
+- **az CLI patch** — 6 App Services need `ASPNETCORE_URLS` + `LinuxFxVersion` patched (DNS was down during session — retry when connectivity is available)
+- **Phase 9 dynamic CORS** — plan complete, not built (`feature/phase-9-dynamic-cors`)
+- **Tifa docs** — README + CHANGELOG for v1.7.0 (incomplete from previous session)
+- **Minor bug** — `POST /api/v1/apps` `registeredAt` returns `0001-01-01`
+- **fp-development-hub GitHub branch** — `github_branch = 'master'` not `'main'` in DB
+- **FEAT-04 (HubApi)** — audit log for project events
 
 ---
