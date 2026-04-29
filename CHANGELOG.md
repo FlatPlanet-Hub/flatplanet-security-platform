@@ -4,6 +4,15 @@ All notable changes to the FlatPlanet Security Platform are documented here.
 
 ---
 
+## [1.4.1] — 2026-04-29
+
+### Fixed
+
+- **Startup CORS query timeout** — the CORS origins `SELECT` query in `Program.cs` ran with no command timeout. On a cold start with a geographically distant database, this blocked app startup for 30–76 seconds or indefinitely on network issues. Query now uses `CommandDefinition(commandTimeout: 10)` — startup completes within 10 seconds even under DB latency, falling back to no dynamic CORS origins (safe default — static config still applies).
+- **Post-deploy health check** — `deploy.yml` now runs `curl --retry 6 --retry-delay 10 --retry-connrefused` against `/health` after deployment. A failed cold start that previously went unnoticed now fails the pipeline immediately.
+
+---
+
 ## [1.4.0] — 2026-04-13
 
 Password self-service — change password and forgot/reset password flows.
