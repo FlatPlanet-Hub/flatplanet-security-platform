@@ -50,6 +50,8 @@ public class UserResponse
     public string FullName { get; set; } = string.Empty;
     public string? RoleTitle { get; set; }
     public string Status { get; set; } = string.Empty;
+    public bool MfaEnabled { get; set; }
+    public string? MfaMethod { get; set; }
     public DateTime CreatedAt { get; set; }
     public DateTime? LastSeenAt { get; set; }
 }
