@@ -86,6 +86,8 @@ public class UserService : IUserService
             FullName   = user.FullName,
             RoleTitle  = user.RoleTitle,
             Status     = user.Status,
+            MfaEnabled = user.MfaEnabled,
+            MfaMethod  = user.MfaMethod,
             CreatedAt  = user.CreatedAt,
             LastSeenAt = user.LastSeenAt,
             AppAccess  = appRoleDetails.Select(d => new UserAppAccessDto
@@ -152,6 +154,8 @@ public class UserService : IUserService
         FullName   = u.FullName,
         RoleTitle  = u.RoleTitle,
         Status     = u.Status,
+        MfaEnabled = u.MfaEnabled,
+        MfaMethod  = u.MfaMethod,
         CreatedAt  = u.CreatedAt,
         LastSeenAt = u.LastSeenAt
     };
