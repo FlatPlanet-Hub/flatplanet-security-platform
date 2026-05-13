@@ -36,26 +36,35 @@ builder.Services.Configure<AppOptions>(builder.Configuration.GetSection(AppOptio
 builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection(SmtpOptions.Section));
 builder.Services.Configure<MfaOptions>(builder.Configuration.GetSection(MfaOptions.Section));
 
-// Database
-builder.Services.AddSingleton<IDbConnectionFactory>(
-    new NpgsqlConnectionFactory(dbOptions.BuildConnectionString()));
+// Database — build the singleton factory up-front so both CORS startup and the DI
+// container share the same pooled NpgsqlDataSource (no duplicate pools).
+var dbFactory = new NpgsqlConnectionFactory(dbOptions.BuildConnectionString());
+builder.Services.AddSingleton<IDbConnectionFactory>(dbFactory);
 
-// CORS — load origins from registered apps + appsettings fallback
+// CORS — load origins from registered apps + appsettings fallback.
+// The DB query runs with a 2-second hard deadline so a slow or unreachable
+// database never delays startup. Config-only origins are always applied regardless.
 var configOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 var dbOrigins = Array.Empty<string>();
 try
 {
-    await using var tempConn = new Npgsql.NpgsqlConnection(dbOptions.BuildConnectionString());
+    using var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+    using var corsConn = await dbFactory.CreateConnectionAsync();
     dbOrigins = (await Dapper.SqlMapper.QueryAsync<string>(
-        tempConn,
+        corsConn,
         new Dapper.CommandDefinition(
             "SELECT DISTINCT base_url FROM apps WHERE status = 'active' AND base_url IS NOT NULL AND base_url <> ''",
-            commandTimeout: 10)))
+            commandTimeout: 2,
+            cancellationToken: startupCts.Token)))
         .ToArray();
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"[CORS] Could not load origins from DB, using config only: {ex.Message}");
+    // ILogger not yet available at this point — log via the logging infrastructure
+    // that IS wired before builder.Build(): the host's pre-build logger factory.
+    var startupLogger = LoggerFactory.Create(b => b.AddConsole())
+        .CreateLogger("Startup");
+    startupLogger.LogWarning(ex, "[CORS] Could not load origins from DB, using config only.");
 }
 
 var allowedOrigins = configOrigins.Union(dbOrigins).ToArray();
@@ -242,11 +251,17 @@ builder.Services.AddScoped<IMfaService, MfaService>();
 builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationService>();
 builder.Services.AddHostedService<AuditLogCleanupService>();
 
+// Email background queue — singleton channel drained by EmailBackgroundWorker.
+// Both registrations point to the same instance so the worker can access the typed Reader.
+builder.Services.AddSingleton<EmailBackgroundQueue>();
+builder.Services.AddSingleton<IEmailBackgroundQueue>(sp => sp.GetRequiredService<EmailBackgroundQueue>());
+builder.Services.AddHostedService<EmailBackgroundWorker>();
+
 var app = builder.Build();
 
 // Pre-warm the DB connection pool so the first login request doesn't pay
 // the cold-start SSL handshake cost for every sequential DB call (~20s on Supabase).
-var dbFactory = app.Services.GetRequiredService<IDbConnectionFactory>();
+// dbFactory was created before builder.Build() and is the same singleton registered in DI.
 using (var c1 = await dbFactory.CreateConnectionAsync())
 using (var c2 = await dbFactory.CreateConnectionAsync()) { }
 

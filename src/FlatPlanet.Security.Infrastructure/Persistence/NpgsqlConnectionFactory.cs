@@ -6,17 +6,20 @@ namespace FlatPlanet.Security.Infrastructure.Persistence;
 
 public class NpgsqlConnectionFactory : IDbConnectionFactory
 {
-    private readonly string _connectionString;
+    private readonly NpgsqlDataSource _dataSource;
 
     public NpgsqlConnectionFactory(string connectionString)
     {
-        _connectionString = connectionString;
+        _dataSource = NpgsqlDataSource.Create(connectionString);
     }
 
     public async Task<IDbConnection> CreateConnectionAsync()
     {
-        var connection = new NpgsqlConnection(_connectionString);
-        await connection.OpenAsync();
-        return connection;
+        return await _dataSource.OpenConnectionAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await _dataSource.DisposeAsync();
     }
 }

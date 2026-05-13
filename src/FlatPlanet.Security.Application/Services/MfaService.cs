@@ -33,6 +33,7 @@ public class MfaService : IMfaService
     private readonly IMfaBackupCodeRepository _backupCodes;
     private readonly IMemoryCache _cache;
     private readonly ILogger<MfaService> _logger;
+    private readonly IEmailBackgroundQueue _emailQueue;
 
     public MfaService(
         IMfaChallengeRepository challenges,
@@ -50,7 +51,8 @@ public class MfaService : IMfaService
         ITotpVerifier totpVerifier,
         IMfaBackupCodeRepository backupCodes,
         IMemoryCache cache,
-        ILogger<MfaService> logger)
+        ILogger<MfaService> logger,
+        IEmailBackgroundQueue emailQueue)
     {
         _challenges = challenges;
         _users = users;
@@ -68,6 +70,7 @@ public class MfaService : IMfaService
         _backupCodes = backupCodes;
         _cache = cache;
         _logger = logger;
+        _emailQueue = emailQueue;
     }
 
     // ── TOTP Enrolment ───────────────────────────────────────────────────────
@@ -230,6 +233,48 @@ public class MfaService : IMfaService
             _logger.LogError(ex, "Email OTP send failed for user {UserId}", userId);
             throw new ServiceUnavailableException("Email service is temporarily unavailable. Please try again.");
         }
+
+        await _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId    = userId,
+            EventType = AuditEventType.MfaOtpIssued,
+            IpAddress = ipAddress,
+            Details   = JsonSerializer.Serialize(new { type = "email_otp" })
+        });
+
+        return challenge;
+    }
+
+    /// <summary>
+    /// Creates the email OTP challenge record synchronously and fires the SMTP send in the
+    /// background so the login response is not blocked by email delivery latency.
+    /// Errors during delivery are logged as warnings — the user can resend if needed.
+    /// </summary>
+    public async Task<MfaChallenge> CreateEmailOtpChallengeAsync(Guid userId, string? ipAddress)
+    {
+        var user = await _users.GetByIdAsync(userId)
+            ?? throw new KeyNotFoundException("User not found.");
+
+        if (user.Status != EntityStatus.Active)
+            throw new ForbiddenException($"User account is {user.Status}.");
+
+        var (expiryMinutes, otpLength) = await GetEmailOtpConfigAsync();
+
+        await _challenges.InvalidateActiveByTypeAsync(userId, "email_otp");
+
+        var otp = GenerateOtp(otpLength);
+        var challenge = await _challenges.CreateAsync(new MfaChallenge
+        {
+            UserId        = userId,
+            ChallengeType = "email_otp",
+            Email         = user.Email,
+            OtpHash       = _jwt.HashToken(otp),
+            ExpiresAt     = DateTime.UtcNow.AddMinutes(expiryMinutes)
+        });
+
+        // Enqueue SMTP delivery so the login response is not blocked on email latency.
+        // The EmailBackgroundWorker drains the channel and logs delivery failures as warnings.
+        _emailQueue.EnqueueOtp(user.Email, otp, expiryMinutes, userId);
 
         await _auditLog.LogAsync(new AuthAuditLog
         {
