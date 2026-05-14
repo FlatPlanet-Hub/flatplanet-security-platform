@@ -872,3 +872,91 @@ Test credentials: `erick.reyes@flatplanet.com` / `Erick@Reyes28` (note: no `.au`
 - **Fix base_url bug** — `RegisterAppAsync` passes HubApi URL not project frontend URL
 
 ---
+
+---
+
+## Session: SP Crash Loop Fix, JWT Extension, Resilience Planning
+
+**Date**: 2026-05-15
+**Branch**: `main` (all commits directly to main)
+**Final SP commit**: `ff19fbb`
+
+---
+
+### What Was Done
+
+#### 1. Diagnosed SP crash loop
+
+SP was in a full crash loop today — Azure warmup probe (230s limit) failing repeatedly across multiple restarts (02:59, 05:48, 05:54, 06:01, 06:07, 09:04 UTC). Health check took 195s when it did respond.
+
+**Root cause**: No `PublishReadyToRun` in the API project. .NET 10 JIT-compiles the entire app on every container start. On Azure B1 (single vCPU), this takes 2–3 minutes — consistently exceeding the 230s warmup timeout → crash loop.
+
+Secondary factor confirmed: `AuditLogCleanupService` startup delay was 2 minutes, firing DB calls at t=120s. This adds PgBouncer connection pressure during initial pool establishment (not a warmup window issue — R2R handles that).
+
+#### 2. Fixes deployed
+
+| Commit | Change |
+|---|---|
+| `813d540` | `PublishReadyToRun=true` in API csproj — startup 2–3 min → sub-1 second |
+| `813d540` | AuditLogCleanupService delay 2 min → 5 min — avoids PgBouncer pressure during pool establishment |
+| `9e50902` | JWT access token extended 60 min → 4 hours — resilience during SP outages |
+| `ff19fbb` | Corrected AuditLogCleanupService comment — delay is about PgBouncer pressure, not warmup window |
+| Azure CLI | `WEBSITE_CONTAINER_START_TIME_LIMIT=300` set as safety net |
+
+**Results post-deploy:**
+- Health check: 195s → 0.8s
+- Cold login: 55–73s → 3–5s
+- Warm login: ~1–2s
+- Crash loop: gone
+
+#### 3. HubApi PR #38 reviewed — approved
+
+`CachedSecurityPlatformService` — decorator over `SecurityPlatformService`. Caches `GetUserAppAccessAsync` per userId, 60s TTL in `IMemoryCache`. Invalidates cache immediately on `GrantRoleAsync`, `ChangeRoleAsync`, `RevokeRoleAsync`. Also reverts HubApi connection string: removes `Keepalive=30`, `Minimum Pool Size=1→0`. Pending merge + deploy.
+
+#### 4. Phase 9 dynamic CORS — Lightning review
+
+Plan reviewed. **Not ready to build.** Key blocker: `apps.base_url` in SP stores the HubApi URL (not Netlify URL) due to the known `base_url` bug — can't derive CORS origins from it.
+
+**Decision**: Option A — new `cors_origins` table in SP (migration required) + new SP admin endpoint `POST /api/admin/cors/origins` + HubApi calls it when a Netlify URL is provisioned.
+
+Current state: `fpdevelopmenthub.netlify.app` and all 28 origins are in `appsettings.json` and working. No active CORS breakage.
+
+#### 5. Frontend resilience guide created
+
+`FlatPlanetHubApi/docs/frontend-sp-resilience-guide.md` — covers 6 rules:
+1. Don't treat every 401 as a logout (only logout on 401 from `/auth/refresh`)
+2. Retry once on 5xx/network error after 3 seconds
+3. Refresh token flow is the only hard logout trigger
+4. Heartbeat errors — skip tick, don't log out
+5. HubApi 502 with `"Security Platform error"` — transient, retry, don't log out
+6. Cache behaviour — 60s TTL, >60s outage → show "platform temporarily unavailable"
+
+JWT lifetime (4 hours) deliberately omitted from frontend doc — internal implementation detail.
+
+---
+
+### Key Decisions
+
+| Decision | Rationale |
+|---|---|
+| `PublishReadyToRun=true` | Eliminates JIT startup time on B1 — the actual crash loop root cause |
+| JWT 4 hours | Users stay authenticated during SP outages; revocation delay acceptable for current threat model |
+| Don't share JWT lifetime with frontend | Prevents frontend from hardcoding assumptions against the value |
+| Phase 9 dynamic CORS — defer | Data source doesn't exist in SP yet; Option A migration needed first |
+| 5-min cleanup delay | PgBouncer pressure concern, not warmup window (warmup is already sub-30s with R2R) |
+
+---
+
+### Open Items
+
+| # | Item | Repo | Notes |
+|---|---|---|---|
+| 1 | Merge + deploy HubApi PR #38 | `FlatPlanetHubApi` | Reviewed ✅, approved — SP access caching |
+| 2 | Phase 9 dynamic CORS | `flatplanet-security-platform` | Needs `cors_origins` migration + SP admin endpoint + HubApi integration point first |
+| 3 | Fix `base_url` bug | `FlatPlanetHubApi` | `RegisterAppAsync` passes HubApi URL not project frontend URL |
+| 4 | FEAT-04 (HubApi) | `FlatPlanetHubApi` | Audit log for project events |
+| 5 | Fix fp-development-hub GitHub branch in DB | HubApi DB | `github_branch = 'master'` not `'main'` |
+| 6 | Delete 3 GitHub repos | GitHub | TestHub, GitHubTest, High-Five |
+| 7 | Share frontend-sp-resilience-guide.md with frontend team | — | Verify 502 error body string in HubApi exception handler before sharing |
+
+---
