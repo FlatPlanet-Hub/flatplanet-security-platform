@@ -230,7 +230,7 @@ var app = builder.Build();
 
 // DB pre-warm intentionally removed:
 // Opening connections before app.Run() blocks Azure's warmup probe → 503/504 on cold start.
-// Minimum Pool Size=1 keeps one connection alive after first use instead.
+// Pool Size=0 (default) — connections are opened on first request and released when idle.
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>();

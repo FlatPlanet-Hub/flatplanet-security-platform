@@ -16,6 +16,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>91434e4c-c505-488f-a156-4baec3fe106e</UserSecretsId>
+    <!-- Pre-compile IL to native at publish time (CI machine) instead of JIT on Azure B1.
+         Without this, cold startup on a single vCPU takes 2–3 min and fails the 230s warmup probe. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
 </Project>
