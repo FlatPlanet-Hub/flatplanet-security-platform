@@ -42,28 +42,35 @@ var dbFactory = new NpgsqlConnectionFactory(dbOptions.BuildConnectionString());
 builder.Services.AddSingleton<IDbConnectionFactory>(dbFactory);
 
 // CORS — load origins from registered apps + appsettings fallback.
-// The DB query runs with a 2-second hard deadline so a slow or unreachable
-// database never delays startup. Config-only origins are always applied regardless.
+// Pre-warm the pool first (up to 5s) so the CORS query uses an already-open
+// connection. Config-only origins (Azure App Settings) are always applied.
 var configOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 var dbOrigins = Array.Empty<string>();
+
+// Step 1: pre-warm the connection pool before the CORS query so it has a live connection.
 try
 {
-    using var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+    using var warmupCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    using var warmConn = await dbFactory.CreateConnectionAsync(warmupCts.Token);
+}
+catch { /* pool warm failed — CORS query will try again below */ }
+
+// Step 2: CORS query — 8s budget now that the pool should be warm.
+try
+{
+    using var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
     using var corsConn = await dbFactory.CreateConnectionAsync(startupCts.Token);
     dbOrigins = (await Dapper.SqlMapper.QueryAsync<string>(
         corsConn,
         new Dapper.CommandDefinition(
             "SELECT DISTINCT base_url FROM apps WHERE status = 'active' AND base_url IS NOT NULL AND base_url <> ''",
-            commandTimeout: 2,
+            commandTimeout: 8,
             cancellationToken: startupCts.Token)))
         .ToArray();
 }
 catch (Exception ex)
 {
-    // ILogger not yet available at this point — log via the logging infrastructure
-    // that IS wired before builder.Build(): the host's pre-build logger factory.
-    var startupLogger = LoggerFactory.Create(b => b.AddConsole())
-        .CreateLogger("Startup");
+    var startupLogger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger("Startup");
     startupLogger.LogWarning(ex, "[CORS] Could not load origins from DB, using config only.");
 }
 
