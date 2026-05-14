@@ -16,5 +16,5 @@ public class DatabaseOptions
         $"No Reset On Close=true;Max Auto Prepare=0;" +
         $"Command Timeout=30;Timeout=30;" +
         $"Keepalive=30;" +
-        $"Minimum Pool Size=1;Maximum Pool Size=20;";
+        $"Minimum Pool Size=0;Maximum Pool Size=20;";
 }
