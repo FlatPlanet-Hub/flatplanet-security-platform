@@ -260,10 +260,19 @@ builder.Services.AddHostedService<EmailBackgroundWorker>();
 var app = builder.Build();
 
 // Pre-warm the DB connection pool so the first login request doesn't pay
-// the cold-start SSL handshake cost for every sequential DB call (~20s on Supabase).
-// dbFactory was created before builder.Build() and is the same singleton registered in DI.
-using (var c1 = await dbFactory.CreateConnectionAsync())
-using (var c2 = await dbFactory.CreateConnectionAsync()) { }
+// the cold-start SSL handshake cost. Capped at 5 seconds — if Supabase is slow
+// on a cold restart the app must still start rather than hang the warmup probe.
+try
+{
+    using var warmupCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+    using (var c1 = await dbFactory.CreateConnectionAsync(warmupCts.Token))
+    using (var c2 = await dbFactory.CreateConnectionAsync(warmupCts.Token)) { }
+}
+catch (Exception)
+{
+    // Pool pre-warm failed — first requests will pay the SSL connection cost.
+    // Not fatal; the app continues normally.
+}
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>();
