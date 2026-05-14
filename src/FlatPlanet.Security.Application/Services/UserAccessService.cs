@@ -39,19 +39,29 @@ public class UserAccessService : IUserAccessService
 
     public async Task<IEnumerable<UserAccessResponse>> GetByAppIdAsync(Guid appId)
     {
-        var rows = await _userAppRoles.GetByAppIdWithDetailsAsync(appId);
+        var entries = await _userAppRoles.GetActiveByAppIdAsync(appId);
+        var result = new List<UserAccessResponse>();
 
-        return rows.Select(r => new UserAccessResponse
+        foreach (var entry in entries)
         {
-            Id           = r.Id,
-            UserId       = r.UserId,
-            UserEmail    = r.UserEmail,
-            UserFullName = r.UserFullName,
-            RoleId       = r.RoleId,
-            RoleName     = r.RoleName,
-            Status       = r.Status,
-            ExpiresAt    = r.ExpiresAt
-        });
+            var user = await _users.GetByIdAsync(entry.UserId);
+            var role = await _roles.GetByIdAsync(entry.RoleId);
+            if (user == null || role == null) continue;
+
+            result.Add(new UserAccessResponse
+            {
+                Id           = entry.Id,
+                UserId       = entry.UserId,
+                UserEmail    = user.Email,
+                UserFullName = user.FullName,
+                RoleId       = entry.RoleId,
+                RoleName     = role.Name,
+                Status       = entry.Status,
+                ExpiresAt    = entry.ExpiresAt
+            });
+        }
+
+        return result;
     }
 
     public async Task<UserAccessResponse> GrantAccessAsync(Guid appId, GrantUserAccessRequest request, Guid grantedBy)

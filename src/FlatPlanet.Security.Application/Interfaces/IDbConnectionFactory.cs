@@ -2,7 +2,7 @@ using System.Data;
 
 namespace FlatPlanet.Security.Application.Interfaces;
 
-public interface IDbConnectionFactory : IAsyncDisposable
+public interface IDbConnectionFactory
 {
-    Task<IDbConnection> CreateConnectionAsync(CancellationToken cancellationToken = default);
+    Task<IDbConnection> CreateConnectionAsync();
 }

@@ -31,15 +31,13 @@ public class MfaServiceTests
     private readonly Mock<IMfaBackupCodeRepository> _backupCodes = new();
     private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
     private readonly Mock<ILogger<MfaService>> _logger = new();
-    private readonly Mock<IEmailBackgroundQueue> _emailQueue = new();
 
     private MfaService CreateService() => new(
         _challenges.Object, _users.Object, _email.Object,
         _configService.Object, _jwt.Object, _auditLog.Object,
         _sessions.Object, _refreshTokens.Object, _roles.Object,
         _db.Object, _identityVerification.Object, _encryptor.Object,
-        _totpVerifier.Object, _backupCodes.Object, _cache, _logger.Object,
-        _emailQueue.Object);
+        _totpVerifier.Object, _backupCodes.Object, _cache, _logger.Object);
 
     private void SetupTransaction()
     {

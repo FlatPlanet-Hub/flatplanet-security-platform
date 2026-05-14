@@ -1,6 +1,5 @@
 using Dapper;
 using FlatPlanet.Security.Application.DTOs.Access;
-using FlatPlanet.Security.Application.DTOs.Admin;
 using FlatPlanet.Security.Application.DTOs.Users;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
@@ -104,23 +103,6 @@ public class UserAppRoleRepository : IUserAppRoleRepository
         using var conn = await _db.CreateConnectionAsync();
         return await conn.QueryAsync<UserAppRole>(
             "SELECT * FROM user_app_roles WHERE app_id = @AppId AND status = 'active'",
-            new { AppId = appId });
-    }
-
-    public async Task<IEnumerable<UserAccessJoinedRow>> GetByAppIdWithDetailsAsync(Guid appId)
-    {
-        using var conn = await _db.CreateConnectionAsync();
-        return await conn.QueryAsync<UserAccessJoinedRow>(
-            """
-            SELECT uar.id, uar.user_id, uar.role_id, uar.status, uar.expires_at,
-                   u.email AS user_email, u.full_name AS user_full_name,
-                   u.status = 'active' AS user_is_active,
-                   r.name AS role_name
-            FROM user_app_roles uar
-            JOIN users u ON u.id = uar.user_id
-            JOIN roles r ON r.id = uar.role_id
-            WHERE uar.app_id = @AppId AND uar.status = 'active' AND (uar.expires_at IS NULL OR uar.expires_at > now())
-            """,
             new { AppId = appId });
     }
 

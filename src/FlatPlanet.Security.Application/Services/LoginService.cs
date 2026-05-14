@@ -74,7 +74,7 @@ public class LoginService : ILoginService
         var maxFailures       = Cfg("max_failed_login_attempts", 5);
         var lockoutMinutes    = Cfg("lockout_duration_minutes", 30);
 
-        var ipCheckTask = string.IsNullOrWhiteSpace(ipAddress)
+        var ipCheckTask = string.IsNullOrEmpty(ipAddress)
             ? Task.FromResult(0)
             : _loginAttempts.CountRecentFailuresByIpAsync(ipAddress, now.AddMinutes(-1));
         var emailAttemptsTask  = _loginAttempts.CountRecentByEmailAsync(request.Email, now.AddMinutes(-1));
@@ -82,17 +82,13 @@ public class LoginService : ILoginService
 
         await Task.WhenAll(ipCheckTask, emailAttemptsTask, recentFailuresTask);
 
-        var ipCount        = await ipCheckTask;
-        var emailCount     = await emailAttemptsTask;
-        var recentFailures = await recentFailuresTask;
-
-        if (!string.IsNullOrWhiteSpace(ipAddress) && ipCount >= rateLimitPerIp)
+        if (!string.IsNullOrEmpty(ipAddress) && ipCheckTask.Result >= rateLimitPerIp)
             throw new TooManyRequestsException("Too many login attempts from this IP.");
 
-        if (emailCount >= rateLimitPerEmail)
+        if (emailAttemptsTask.Result >= rateLimitPerEmail)
             throw new TooManyRequestsException("Too many login attempts for this account.");
 
-        if (recentFailures >= maxFailures)
+        if (recentFailuresTask.Result >= maxFailures)
             throw new AccountLockedException("Account is temporarily locked. Please try again later.");
 
         var user = await _users.GetByEmailAsync(request.Email);
@@ -179,7 +175,7 @@ public class LoginService : ILoginService
             if (user.MfaMethod == "totp")
                 return new LoginResponse { RequiresMfa = true, MfaMethod = "totp", User = new UserProfileDto { UserId = user.Id } };
 
-            var challenge = await _mfa.CreateEmailOtpChallengeAsync(user.Id, ipAddress);
+            var challenge = await _mfa.SendEmailOtpAsync(user.Id, ipAddress);
             return new LoginResponse { RequiresMfa = true, MfaMethod = "email_otp", ChallengeId = challenge.Id, User = new UserProfileDto { UserId = user.Id } };
         }
 

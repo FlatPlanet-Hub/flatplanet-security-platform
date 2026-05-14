@@ -4,7 +4,6 @@ using System.Threading.RateLimiting;
 using FlatPlanet.Security.API.Authentication;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
-using Microsoft.AspNetCore.HttpOverrides;
 using FlatPlanet.Security.API.Middleware;
 using FlatPlanet.Security.Application.Common.Options;
 using FlatPlanet.Security.Application.Interfaces;
@@ -37,14 +36,29 @@ builder.Services.Configure<AppOptions>(builder.Configuration.GetSection(AppOptio
 builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection(SmtpOptions.Section));
 builder.Services.Configure<MfaOptions>(builder.Configuration.GetSection(MfaOptions.Section));
 
-// Database — build the singleton factory up-front so both CORS startup and the DI
-// container share the same pooled NpgsqlDataSource (no duplicate pools).
-var dbFactory = new NpgsqlConnectionFactory(dbOptions.BuildConnectionString());
-builder.Services.AddSingleton<IDbConnectionFactory>(dbFactory);
+// Database
+builder.Services.AddSingleton<IDbConnectionFactory>(
+    new NpgsqlConnectionFactory(dbOptions.BuildConnectionString()));
 
-// CORS — origins loaded from appsettings.json (all active project frontends listed there).
-// No DB query at startup — avoids connection hangs on cold restarts.
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+// CORS — load origins from registered apps + appsettings fallback
+var configOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
+var dbOrigins = Array.Empty<string>();
+try
+{
+    await using var tempConn = new Npgsql.NpgsqlConnection(dbOptions.BuildConnectionString());
+    dbOrigins = (await Dapper.SqlMapper.QueryAsync<string>(
+        tempConn,
+        new Dapper.CommandDefinition(
+            "SELECT DISTINCT base_url FROM apps WHERE status = 'active' AND base_url IS NOT NULL AND base_url <> ''",
+            commandTimeout: 10)))
+        .ToArray();
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"[CORS] Could not load origins from DB, using config only: {ex.Message}");
+}
+
+var allowedOrigins = configOrigins.Union(dbOrigins).ToArray();
 
 builder.Services.AddCors(options =>
 {
@@ -228,26 +242,17 @@ builder.Services.AddScoped<IMfaService, MfaService>();
 builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationService>();
 builder.Services.AddHostedService<AuditLogCleanupService>();
 
-// Email background queue — singleton channel drained by EmailBackgroundWorker.
-// Both registrations point to the same instance so the worker can access the typed Reader.
-builder.Services.AddSingleton<EmailBackgroundQueue>();
-builder.Services.AddSingleton<IEmailBackgroundQueue>(sp => sp.GetRequiredService<EmailBackgroundQueue>());
-builder.Services.AddHostedService<EmailBackgroundWorker>();
-
 var app = builder.Build();
 
+// Pre-warm the DB connection pool so the first login request doesn't pay
+// the cold-start SSL handshake cost for every sequential DB call (~20s on Supabase).
+var dbFactory = app.Services.GetRequiredService<IDbConnectionFactory>();
+using (var c1 = await dbFactory.CreateConnectionAsync())
+using (var c2 = await dbFactory.CreateConnectionAsync()) { }
 
-// Azure App Service terminates TLS at the load balancer — the app receives plain HTTP
-// internally. UseForwardedHeaders lets ASP.NET Core read X-Forwarded-For / X-Forwarded-Proto
-// so Request.IsHttps and RemoteIpAddress are correct. UseHttpsRedirection is intentionally
-// omitted: Azure enforces HTTPS at the LB level; redirecting internally would cause every
-// request to get a 301 loop that Azure and curl cannot resolve cleanly.
-app.UseForwardedHeaders(new ForwardedHeadersOptions
-{
-    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
-});
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>();
+app.UseHttpsRedirection();
 app.UseCors();
 app.UseAuthentication();
 app.UseMiddleware<SessionValidationMiddleware>();
