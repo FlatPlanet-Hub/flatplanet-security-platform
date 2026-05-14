@@ -74,21 +74,21 @@ public class LoginService : ILoginService
         var maxFailures       = Cfg("max_failed_login_attempts", 5);
         var lockoutMinutes    = Cfg("lockout_duration_minutes", 30);
 
-        var ipCheckTask = string.IsNullOrEmpty(ipAddress)
-            ? Task.FromResult(0)
-            : _loginAttempts.CountRecentFailuresByIpAsync(ipAddress, now.AddMinutes(-1));
-        var emailAttemptsTask  = _loginAttempts.CountRecentByEmailAsync(request.Email, now.AddMinutes(-1));
-        var recentFailuresTask = _loginAttempts.CountRecentFailuresByEmailAsync(request.Email, now.AddMinutes(-lockoutMinutes));
+        // Single query replaces 3 parallel COUNT queries — 1 connection checkout instead of 3.
+        var checks = await _loginAttempts.GetLoginChecksAsync(
+            email:        request.Email,
+            ipAddress:    ipAddress,
+            ipSince:      now.AddMinutes(-1),
+            emailSince:   now.AddMinutes(-1),
+            lockoutSince: now.AddMinutes(-lockoutMinutes));
 
-        await Task.WhenAll(ipCheckTask, emailAttemptsTask, recentFailuresTask);
-
-        if (!string.IsNullOrEmpty(ipAddress) && ipCheckTask.Result >= rateLimitPerIp)
+        if (!string.IsNullOrEmpty(ipAddress) && checks.IpFailures >= rateLimitPerIp)
             throw new TooManyRequestsException("Too many login attempts from this IP.");
 
-        if (emailAttemptsTask.Result >= rateLimitPerEmail)
+        if (checks.EmailAttempts >= rateLimitPerEmail)
             throw new TooManyRequestsException("Too many login attempts for this account.");
 
-        if (recentFailuresTask.Result >= maxFailures)
+        if (checks.LockoutFailures >= maxFailures)
             throw new AccountLockedException("Account is temporarily locked. Please try again later.");
 
         var user = await _users.GetByEmailAsync(request.Email);
@@ -118,7 +118,12 @@ public class LoginService : ILoginService
         if (user.Status != EntityStatus.Active)
             throw new ForbiddenException($"User account is {user.Status}.");
 
-        var company = await _companies.GetByIdAsync(user.CompanyId)
+        // Fetch company and platform roles in parallel — both only need user.CompanyId / user.Id.
+        var companyTask = _companies.GetByIdAsync(user.CompanyId);
+        var rolesTask   = _roles.GetPlatformRoleNamesForUserAsync(user.Id);
+        await Task.WhenAll(companyTask, rolesTask);
+
+        var company = companyTask.Result
             ?? throw new UnauthorizedAccessException("Company not found.");
         if (company.Status != EntityStatus.Active)
             throw new ForbiddenException($"Company account is {company.Status}.");
@@ -223,7 +228,7 @@ public class LoginService : ILoginService
             }
         }
 
-        var platformRoles      = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
+        var platformRoles      = rolesTask.Result;
         var accessToken        = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
         var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
 
