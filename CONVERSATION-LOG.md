@@ -762,3 +762,113 @@ Checked `AuthorizationService.cs` — platform_owner bypass (lines 44-49) and `A
 - **FEAT-04 (HubApi)** — audit log for project events
 
 ---
+
+## Session: Azure 504 Debugging, Optimization PR Revert, Cold-Start Fixes
+
+**Date**: 2026-05-14
+**Branch**: `main` (all commits directly to main — CI/CD deploys on push)
+**Final commit**: `c507186`
+
+---
+
+### What Was Done
+
+#### 1. Azure 504 Gateway Timeout investigation (Lightning review)
+
+All requests to the deployed SP were returning TCP connect success but 0 bytes — Azure returned a 504 after its 240s timeout. Lightning and Yuffie were run in parallel.
+
+Two root causes identified in the optimization PR (merged previously):
+
+**Root cause A — UseHttpsRedirection() + Azure LB TLS termination**
+Azure App Service terminates TLS at the load balancer. The container receives plain HTTP on port 8080. `UseHttpsRedirection()` reads the incoming request as HTTP and issues a 301 → https. The Azure LB follows the redirect, loops indefinitely until 240s timeout → 504. Fix: remove `UseHttpsRedirection()` and add `UseForwardedHeaders()`.
+
+**Root cause B — EmailBackgroundWorker `throw;` causes StopHost**
+The optimization PR introduced `EmailBackgroundWorker` with a rethrow in the outer catch. .NET 6+ default `BackgroundServiceExceptionBehavior = StopHost` means any rethrown exception from a BackgroundService shuts down the entire host. Kestrel accepts TCP connections but stops processing them → 0 bytes returned.
+
+#### 2. Resolution — full revert to pre-optimization baseline
+
+Decision: revert the entire optimization PR back to `f52532d` (pre-optimization), then re-add only the safe net-positive changes:
+- All 28 CORS origins added to `appsettings.json` (static, no DB query at startup)
+- `Minimum Pool Size=0` (was `Minimum Pool Size=2`)
+- Startup DB CORS query removed entirely
+
+**Why not keep the optimizations?**
+The optimization PR bundled too many changes together. Rather than surgically extract the EmailBackgroundWorker bug, we reverted cleanly and will re-introduce features one at a time with testing.
+
+#### 3. Pool Size fix — Minimum Pool Size=0 (commit 2167786)
+
+`Minimum Pool Size=2` caused Npgsql to eagerly open 2 background connections on startup. On Supabase cold start, these background connections fail, corrupting in-flight response streams → 500 with empty body. Changed to `Minimum Pool Size=0`.
+
+#### 4. Startup CORS DB query removed (commit c507186)
+
+The pre-optimization code queried the DB for CORS origins during `Program.cs` startup, before `app.Run()`. Azure App Service warmup probes were timing out waiting for this query → "Application Error" page on every cold restart. Removed entirely — all 28 origins now live in `appsettings.json`.
+
+#### 5. DB connection string switched to session pooler
+
+During debugging, connection settings were updated in Azure App Service:
+- **Host**: `aws-1-ap-southeast-1.pooler.supabase.com`
+- **Port**: `5432` (session pooler)
+- **User**: `postgres.zelzeyjlbanaefutmewh`
+- **Password**: (in Azure App Settings, not in code)
+
+Session pooler is the correct mode for this app (vs. transaction mode port 6543 which doesn't support prepared statements).
+
+#### 6. Login performance profile (Yuffie observed)
+
+After all fixes, login times follow a pool warm-up curve:
+- Cold (first request): ~55s → ~24s → ~6s → ~1.66s → ~2.47s (stable warm)
+
+**Root cause of slowness**: `LoginService` makes ~10 sequential DB round trips. Each round trip on Supabase pgBouncer pays checkout + SSL handshake cost on a cold pool. After pool warms, connections are reused → ~1-2s stable. This is architectural, not a bug. NpgsqlDataSource would NOT improve this (Npgsql pools internally either way).
+
+#### 7. Integration test suite — all PASS (Yuffie)
+
+| Test | Result |
+|---|---|
+| GET /health | ✅ PASS (599ms) |
+| POST /api/v1/auth/login | ✅ PASS (~4.7s cold, ~1-2s warm) |
+| GET /api/v1/auth/me | ✅ PASS (866ms) |
+| POST /api/v1/auth/refresh | ✅ PASS (1.2s) |
+| POST /api/v1/auth/logout | ✅ PASS (1.1s) |
+| CORS (RTW + Hub origins) | ✅ PASS |
+| Error handling (wrong pw, wrong email, empty body) | ✅ PASS |
+
+Test credentials: `erick.reyes@flatplanet.com` / `Erick@Reyes28` (note: no `.au` suffix)
+
+---
+
+### Commits This Session
+
+| Commit | Description |
+|---|---|
+| `32fff29` | fix: remove all startup DB connections to eliminate cold-start hang |
+| `be1f7f0` | fix: add all active FlatPlanet project URLs to static CORS origins |
+| `001b9d6` | fix: resolve Azure startup hang — remove UseHttpsRedirection, fix StopHost |
+| `e8deee3` | revert: roll back to f52532d (pre-optimization) + all 28 CORS origins |
+| `2167786` | fix: set Minimum Pool Size=0 to prevent background connection failures on cold start |
+| `c507186` | fix: remove startup DB CORS query — causes app crash on cold start |
+
+---
+
+### Key Decisions
+
+| Decision | Rationale |
+|---|---|
+| Full revert to pre-optimization baseline | Optimization PR was too bundled; clean revert safer than surgical extraction |
+| All CORS origins in appsettings.json | No DB query at startup; avoids connection hang on cold restarts |
+| Minimum Pool Size=0 | Eager background connections fail on Supabase cold start, corrupt in-flight responses |
+| Session pooler (port 5432) | Correct pooler mode; transaction mode (port 6543) doesn't support prepared statements |
+| CI health check intentionally NOT fixed | User deploys manually; CI health check step left as-is |
+
+---
+
+### Open Items (carried forward)
+
+- **Re-introduce optimization features one at a time**: N+1 fixes in repositories, email background queue (without the rethrow bug) — NOT the EmailBackgroundWorker pattern
+- **Login performance**: ~10 sequential DB round trips in LoginService — could be reduced by combining queries (architectural improvement, not a bug)
+- **Minor bug** — `POST /api/v1/apps` `registeredAt` returns `0001-01-01`
+- **fp-development-hub GitHub branch** — `github_branch = 'master'` not `'main'` in DB
+- **FEAT-04 (HubApi)** — audit log for project events
+- **Delete 3 GitHub repos** — TestHub, GitHubTest, High-Five
+- **Fix base_url bug** — `RegisterAppAsync` passes HubApi URL not project frontend URL
+
+---
