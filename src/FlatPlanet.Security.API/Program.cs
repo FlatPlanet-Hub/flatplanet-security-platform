@@ -49,7 +49,7 @@ var dbOrigins = Array.Empty<string>();
 try
 {
     using var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(2));
-    using var corsConn = await dbFactory.CreateConnectionAsync();
+    using var corsConn = await dbFactory.CreateConnectionAsync(startupCts.Token);
     dbOrigins = (await Dapper.SqlMapper.QueryAsync<string>(
         corsConn,
         new Dapper.CommandDefinition(
