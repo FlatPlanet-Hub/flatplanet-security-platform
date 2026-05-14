@@ -4,6 +4,7 @@ using System.Threading.RateLimiting;
 using FlatPlanet.Security.API.Authentication;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.HttpOverrides;
 using FlatPlanet.Security.API.Middleware;
 using FlatPlanet.Security.Application.Common.Options;
 using FlatPlanet.Security.Application.Interfaces;
@@ -236,9 +237,17 @@ builder.Services.AddHostedService<EmailBackgroundWorker>();
 var app = builder.Build();
 
 
+// Azure App Service terminates TLS at the load balancer — the app receives plain HTTP
+// internally. UseForwardedHeaders lets ASP.NET Core read X-Forwarded-For / X-Forwarded-Proto
+// so Request.IsHttps and RemoteIpAddress are correct. UseHttpsRedirection is intentionally
+// omitted: Azure enforces HTTPS at the LB level; redirecting internally would cause every
+// request to get a 301 loop that Azure and curl cannot resolve cleanly.
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+});
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>();
-app.UseHttpsRedirection();
 app.UseCors();
 app.UseAuthentication();
 app.UseMiddleware<SessionValidationMiddleware>();

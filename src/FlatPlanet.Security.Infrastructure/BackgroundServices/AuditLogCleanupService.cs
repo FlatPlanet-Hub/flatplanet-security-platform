@@ -18,6 +18,10 @@ public class AuditLogCleanupService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
+        // Let the app fully start before the first cleanup run — avoids opening DB connections
+        // during the Azure warmup probe window (first ~30 seconds after deploy).
+        await Task.Delay(TimeSpan.FromMinutes(2), ct);
+
         while (!ct.IsCancellationRequested)
         {
             try

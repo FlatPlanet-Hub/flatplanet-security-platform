@@ -49,7 +49,10 @@ public class EmailBackgroundWorker : BackgroundService
         {
             _logger.LogCritical(ex,
                 "Email background worker crashed unexpectedly. MFA OTP email delivery is disabled until the service restarts.");
-            throw; // re-throw so the host knows the service failed
+            // Do NOT rethrow — .NET 6+ default BackgroundServiceExceptionBehavior is StopHost.
+            // Rethrowing kills the entire application (Kestrel enters shutdown, accepts TCP
+            // connections but never processes them → every request hangs). The worker will
+            // simply stop; the API stays alive and can be restarted to re-enable email delivery.
         }
         finally
         {
