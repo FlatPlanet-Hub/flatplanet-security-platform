@@ -71,9 +71,8 @@ public class LoginServiceTests
         var sessionId = Guid.NewGuid();
         var companyId = Guid.NewGuid();
 
-        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.GetLoginChecksAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(new LoginCheckCounts(0, 0, 0));
         _loginAttempts.Setup(l => l.RecordAsync(It.IsAny<LoginAttempt>())).Returns(Task.CompletedTask);
 
         var user = new User { Id = userId, CompanyId = companyId, Email = "user@test.com", FullName = "Test User", Status = "active", PasswordHash = "hashed" };
@@ -113,9 +112,8 @@ public class LoginServiceTests
     {
         // Arrange
         SetupDefaultConfig();
-        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.GetLoginChecksAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(new LoginCheckCounts(0, 0, 0));
         _loginAttempts.Setup(l => l.RecordAsync(It.IsAny<LoginAttempt>())).Returns(Task.CompletedTask);
         _users.Setup(u => u.GetByEmailAsync(It.IsAny<string>()))
             .ReturnsAsync(new User { Id = Guid.NewGuid(), Email = "bad@test.com", PasswordHash = "hashed", Status = "active" });
@@ -134,9 +132,8 @@ public class LoginServiceTests
     {
         // Arrange
         SetupDefaultConfig();
-        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.GetLoginChecksAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(new LoginCheckCounts(0, 0, 0));
         _loginAttempts.Setup(l => l.RecordAsync(It.IsAny<LoginAttempt>())).Returns(Task.CompletedTask);
         _users.Setup(u => u.GetByEmailAsync(It.IsAny<string>())).ReturnsAsync((User?)null);
         _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
@@ -153,10 +150,9 @@ public class LoginServiceTests
     {
         // Arrange
         SetupDefaultConfig();
-        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        // 5 recent failures = locked
-        _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(5);
+        // 5 lockout failures = locked
+        _loginAttempts.Setup(l => l.GetLoginChecksAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(new LoginCheckCounts(IpFailures: 0, EmailAttempts: 0, LockoutFailures: 5));
 
         var service = CreateService();
 
@@ -171,7 +167,8 @@ public class LoginServiceTests
         // Arrange
         SetupDefaultConfig();
         // IP has 5 failures (equals limit)
-        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync("1.2.3.4", It.IsAny<DateTime>())).ReturnsAsync(5);
+        _loginAttempts.Setup(l => l.GetLoginChecksAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(new LoginCheckCounts(IpFailures: 5, EmailAttempts: 0, LockoutFailures: 0));
 
         var service = CreateService();
 
@@ -185,9 +182,9 @@ public class LoginServiceTests
     {
         // Arrange
         SetupDefaultConfig();
-        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        // 10 attempts for this email in the last minute = limit hit
-        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(10);
+        // 10 email attempts in the last minute = limit hit
+        _loginAttempts.Setup(l => l.GetLoginChecksAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(new LoginCheckCounts(IpFailures: 0, EmailAttempts: 10, LockoutFailures: 0));
 
         var service = CreateService();
 
@@ -201,9 +198,8 @@ public class LoginServiceTests
     {
         // Arrange
         SetupDefaultConfig();
-        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.GetLoginChecksAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(new LoginCheckCounts(0, 0, 0));
         _users.Setup(u => u.GetByEmailAsync(It.IsAny<string>()))
             .ReturnsAsync(new User { Id = Guid.NewGuid(), Email = "user@test.com", PasswordHash = "hashed", Status = "inactive" });
         _passwordHasher.Setup(p => p.Verify(It.IsAny<string>(), It.IsAny<string>())).Returns(true);
@@ -223,9 +219,8 @@ public class LoginServiceTests
         var userId = Guid.NewGuid();
         var companyId = Guid.NewGuid();
 
-        _loginAttempts.Setup(l => l.CountRecentFailuresByIpAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _loginAttempts.Setup(l => l.CountRecentByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
-        _loginAttempts.Setup(l => l.CountRecentFailuresByEmailAsync(It.IsAny<string>(), It.IsAny<DateTime>())).ReturnsAsync(0);
+        _loginAttempts.Setup(l => l.GetLoginChecksAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(new LoginCheckCounts(0, 0, 0));
         _users.Setup(u => u.GetByEmailAsync(It.IsAny<string>()))
             .ReturnsAsync(new User { Id = userId, CompanyId = companyId, Email = "user@test.com", PasswordHash = "hashed", Status = "active" });
         _passwordHasher.Setup(p => p.Verify(It.IsAny<string>(), It.IsAny<string>())).Returns(true);
