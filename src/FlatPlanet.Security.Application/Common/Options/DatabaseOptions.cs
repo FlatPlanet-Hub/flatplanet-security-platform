@@ -15,6 +15,5 @@ public class DatabaseOptions
         $"SslMode=Require;Trust Server Certificate=true;" +
         $"No Reset On Close=true;Max Auto Prepare=0;" +
         $"Command Timeout=30;Timeout=30;" +
-        $"Connection Idle Lifetime=1800;" +
         $"Minimum Pool Size=0;Maximum Pool Size=20;";
 }
