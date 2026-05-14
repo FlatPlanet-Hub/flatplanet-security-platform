@@ -236,7 +236,9 @@ using (var c2 = await dbFactory.CreateConnectionAsync()) { }
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>();
-app.UseHttpsRedirection();
+// UseHttpsRedirection() intentionally removed:
+// Azure App Service terminates TLS at the load balancer — the container receives plain HTTP on port 8080.
+// Enabling this causes an infinite 301 redirect loop that Azure LB follows until 240s timeout → 504.
 app.UseCors();
 app.UseAuthentication();
 app.UseMiddleware<SessionValidationMiddleware>();
