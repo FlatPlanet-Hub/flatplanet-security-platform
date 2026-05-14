@@ -41,40 +41,9 @@ builder.Services.Configure<MfaOptions>(builder.Configuration.GetSection(MfaOptio
 var dbFactory = new NpgsqlConnectionFactory(dbOptions.BuildConnectionString());
 builder.Services.AddSingleton<IDbConnectionFactory>(dbFactory);
 
-// CORS — load origins from registered apps + appsettings fallback.
-// Pre-warm the pool first (up to 5s) so the CORS query uses an already-open
-// connection. Config-only origins (Azure App Settings) are always applied.
-var configOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
-var dbOrigins = Array.Empty<string>();
-
-// Step 1: pre-warm the connection pool before the CORS query so it has a live connection.
-try
-{
-    using var warmupCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    using var warmConn = await dbFactory.CreateConnectionAsync(warmupCts.Token);
-}
-catch { /* pool warm failed — CORS query will try again below */ }
-
-// Step 2: CORS query — 8s budget now that the pool should be warm.
-try
-{
-    using var startupCts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
-    using var corsConn = await dbFactory.CreateConnectionAsync(startupCts.Token);
-    dbOrigins = (await Dapper.SqlMapper.QueryAsync<string>(
-        corsConn,
-        new Dapper.CommandDefinition(
-            "SELECT DISTINCT base_url FROM apps WHERE status = 'active' AND base_url IS NOT NULL AND base_url <> ''",
-            commandTimeout: 8,
-            cancellationToken: startupCts.Token)))
-        .ToArray();
-}
-catch (Exception ex)
-{
-    var startupLogger = LoggerFactory.Create(b => b.AddConsole()).CreateLogger("Startup");
-    startupLogger.LogWarning(ex, "[CORS] Could not load origins from DB, using config only.");
-}
-
-var allowedOrigins = configOrigins.Union(dbOrigins).ToArray();
+// CORS — origins loaded from appsettings.json (all active project frontends listed there).
+// No DB query at startup — avoids connection hangs on cold restarts.
+var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? [];
 
 builder.Services.AddCors(options =>
 {
@@ -266,20 +235,6 @@ builder.Services.AddHostedService<EmailBackgroundWorker>();
 
 var app = builder.Build();
 
-// Pre-warm the DB connection pool so the first login request doesn't pay
-// the cold-start SSL handshake cost. Capped at 5 seconds — if Supabase is slow
-// on a cold restart the app must still start rather than hang the warmup probe.
-try
-{
-    using var warmupCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    using (var c1 = await dbFactory.CreateConnectionAsync(warmupCts.Token))
-    using (var c2 = await dbFactory.CreateConnectionAsync(warmupCts.Token)) { }
-}
-catch (Exception)
-{
-    // Pool pre-warm failed — first requests will pay the SSL connection cost.
-    // Not fatal; the app continues normally.
-}
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>();
