@@ -18,9 +18,10 @@ public class AuditLogCleanupService : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
-        // Wait for the app to fully warm up before first run.
-        // Azure App Service probes the warmup path for up to 230s after container start.
-        // Delaying 5 min ensures the probe completes before we open any Supabase connections.
+        // Delay first run to avoid adding PgBouncer connection pressure during the initial
+        // connection establishment phase. At startup the pool is being built from zero by
+        // real user requests; the cleanup service opening 4 more connections at t=120s adds
+        // unnecessary pressure before the pool has had time to settle.
         await Task.Delay(TimeSpan.FromMinutes(5), ct).ConfigureAwait(false);
 
         while (!ct.IsCancellationRequested)
