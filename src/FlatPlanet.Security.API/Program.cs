@@ -261,9 +261,11 @@ var app = builder.Build();
 
 // Pre-warm the DB connection pool so the first login request doesn't pay
 // the cold-start SSL handshake cost for every sequential DB call (~20s on Supabase).
+// A 10-second hard deadline prevents startup from hanging if Supabase is unreachable.
 // dbFactory was created before builder.Build() and is the same singleton registered in DI.
-using (var c1 = await dbFactory.CreateConnectionAsync())
-using (var c2 = await dbFactory.CreateConnectionAsync()) { }
+using var prewarmCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+using (var c1 = await dbFactory.CreateConnectionAsync(prewarmCts.Token))
+using (var c2 = await dbFactory.CreateConnectionAsync(prewarmCts.Token)) { }
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseMiddleware<SecurityHeadersMiddleware>();
