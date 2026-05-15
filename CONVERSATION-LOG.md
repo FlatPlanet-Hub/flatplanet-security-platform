@@ -960,3 +960,63 @@ JWT lifetime (4 hours) deliberately omitted from frontend doc — internal imple
 | 7 | Share frontend-sp-resilience-guide.md with frontend team | — | Verify 502 error body string in HubApi exception handler before sharing |
 
 ---
+
+## Session — 2026-05-15 (afternoon)
+
+### What happened
+
+Hub felt slow and intermittently unreachable. Investigation went through three diagnoses before landing on the real cause:
+
+1. **First theory: Azure restart** — confirmed at 04:50 UTC both SP and HubApi were moved to a new VM (`lw1sdlwk000ACL`). SP warmup took 131s, HubApi 136s. Real but a one-time event, not the recurring slowness.
+2. **Second theory: SP cold DB pool** — investigated PgBouncer + `Minimum Pool Size=0`. Considered adding a background pool warm-up service (different from the removed pre-warm — it runs after `app.Run()` so doesn't block the warmup probe).
+3. **Real cause: Finvoice agent DOSing HubApi** — project `934e65c0-e369-4d45-a9a5-0b3cb64f2b1d` was running a broken Claude agent in a retry loop. Every retry held a connection through exception unwinding, saturating the 20-slot pool. 29 unhandled exceptions in 2 seconds at one point.
+
+### The actual SQL errors from the Finvoice agent
+
+- `column "satisfaction_score" is of type numeric but expression is of type text` — sending strings to numeric column
+- `column "is_new" does not exist` — invented column name not in the schema
+- `duplicate key value violates unique constraint "tickets_pkey"` — generating duplicate IDs
+
+Agent clearly skipped reading the schema before writing. Tells the project user to fix on their side: cast in SQL (`@score::numeric`), or parse to number in code, or fix the source.
+
+### ApprovalFlow had a separate (harmless) issue
+
+Project `aa09bfd5-9e16-4597-a3cf-e4a9ce13f046` was firing requests then cancelling them mid-body (Kestrel `BadHttpRequestException: Unexpected end of request content`). Likely a `useEffect` without proper cleanup. Loud in logs but doesn't reach the DB so no pool impact. Worth fixing on their side; HubApi should also catch these and log at Debug instead of surfacing as Error.
+
+### PR #39 — open, ready to deploy in low-traffic window
+
+`feature/cache-sp-user-access` on HubApi. Contains:
+- `PublishReadyToRun=true` on HubApi API csproj — eliminates JIT crash loop risk (same fix as SP got earlier)
+- `CachedSecurityPlatformService` properly wired in DI as a decorator (was untracked file + unwired before)
+- Two-tier cache: 5-min fresh TTL, 2-hour stale fallback, serves stale on SP error
+- Explicit role changes invalidate both keys
+
+PR also includes the frontend resilience guide and platform token auto-refresh scope docs.
+
+**PR #39 does NOT fix today's incident** — Finvoice is a HubApi-side pool problem, not an SP problem. PR #39 is defensive infrastructure for future Azure restarts and SP outages.
+
+### Pool warm-up service — investigated, not built
+
+Concept: `BackgroundService` that fires 10s after `app.Run()`, opens 2 DB connections to pre-warm the pool. Different from the old pre-warm because it runs AFTER `app.Run()`, so it doesn't block Azure's warmup probe. Reasoning verified.
+
+Decision: not building it now. Today's slowness was Finvoice, not cold pool. If post-restart slowness recurs after PR #39 deploys, revisit.
+
+### Real lesson from today
+
+The actual fix for today's pattern is **per-project rate limiting on HubApi `/query/*` endpoints**. One misbehaving Claude session should not be able to saturate the pool for everyone else. Not in PR #39 — this is the next follow-up PR.
+
+### State of the world at session end
+
+- SP: stable, `a44fe17b` deployed, R2R working (current restart pattern is 130s but doesn't crash loop)
+- HubApi: stable, current deploy has no R2R yet, no cache wired — vulnerable to next Azure restart
+- Finvoice agent: stopped (the user got that resolved)
+- PR #39: pushed, ready to merge during low-traffic window tonight
+
+### Open items added this session
+
+| # | Item | Notes |
+|---|---|---|
+| 8 | Per-project rate limit on `/query/read` and `/query/write` | The real fix for today's pattern. Per-`app_id` partition, e.g. 30 req/min. |
+| 9 | Catch `BadHttpRequestException` in `GlobalExceptionMiddleware` | Log at Debug, not Error — these are client cancellations, not bugs |
+| 10 | Background DB pool warm-up service (SP) | Only if post-restart slowness persists after PR #39 — currently shelved |
+
