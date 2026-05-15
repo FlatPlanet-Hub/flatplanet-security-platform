@@ -7,10 +7,11 @@
 ## TL;DR — What to do tonight
 
 1. Wait for a low-traffic window (late evening PH time)
-2. Merge **HubApi PR #39** → https://github.com/FlatPlanet-Hub/platform-api/pull/39
+2. Merge **HubApi PR #39** → https://github.com/FlatPlanet-Hub/platform-api/pull/39 (R2R + cache)
 3. Watch logs for clean startup (~3 min outage during deploy)
 4. Verify cache decorator is wired (see [verification](#post-deploy-verification))
-5. Optionally start the next PR: per-project rate limiting on `/query/*`
+5. If #39 looks good, merge **HubApi PR #40** → https://github.com/FlatPlanet-Hub/platform-api/pull/40 (per-project rate limit on `/query/*`)
+6. Another ~3 min outage for the second deploy
 
 That's it. Everything else in this document is context if you need it.
 
@@ -162,7 +163,7 @@ Project `aa09bfd5-9e16-4597-a3cf-e4a9ce13f046` was firing requests then cancelli
 
 | # | Item | Priority | Notes |
 |---|---|---|---|
-| 1 | Per-project rate limiting on `/query/read` and `/query/write` | **HIGH** | The actual fix for the Finvoice pattern. Add a rate limiter partitioned by `app_id` claim, e.g. 30 req/min. Prevents any single Claude session from DOSing the pool. |
+| 1 | Per-project rate limiting on `/query/read` and `/query/write` | **HIGH** | ✅ Done — PR #40 on `feature/per-project-rate-limit`. 30 req/min partitioned by `projectId` route value. Ready to deploy after PR #39. |
 | 2 | Catch `BadHttpRequestException` in `GlobalExceptionMiddleware` | LOW | Log at Debug, not Error. ApprovalFlow's cancellations shouldn't surface as unhandled exceptions. |
 | 3 | Cache `GetAppIdBySlugAsync`, `GetAppMembersAsync`, `GetUserAsync` | MEDIUM | These still hit SP live. `AuthorizeAsync` is trickier — needs interface signature change to include `userId`. |
 | 4 | Background DB pool warm-up (SP) | LOW | Only build this if post-restart slowness persists after PR #39. Currently shelved. |
