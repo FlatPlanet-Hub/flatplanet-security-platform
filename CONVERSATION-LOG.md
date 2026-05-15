@@ -952,7 +952,7 @@ JWT lifetime (4 hours) deliberately omitted from frontend doc — internal imple
 | # | Item | Repo | Notes |
 |---|---|---|---|
 | 1 | Merge + deploy HubApi PR #38 | `FlatPlanetHubApi` | Reviewed ✅, approved — SP access caching |
-| 2 | Phase 9 dynamic CORS | `flatplanet-security-platform` | Needs `cors_origins` migration + SP admin endpoint + HubApi integration point first |
+| 2 | Phase 9 dynamic CORS | `flatplanet-security-platform` | CANCELLED — appsettings.json is sufficient. Add URL + push when new project added. |
 | 3 | Fix `base_url` bug | `FlatPlanetHubApi` | `RegisterAppAsync` passes HubApi URL not project frontend URL |
 | 4 | FEAT-04 (HubApi) | `FlatPlanetHubApi` | Audit log for project events |
 | 5 | Fix fp-development-hub GitHub branch in DB | HubApi DB | `github_branch = 'master'` not `'main'` |
