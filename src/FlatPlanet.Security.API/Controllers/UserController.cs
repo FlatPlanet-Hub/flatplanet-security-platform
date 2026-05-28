@@ -1,6 +1,7 @@
 using FlatPlanet.Security.Application.DTOs.Admin;
 using FlatPlanet.Security.Application.DTOs.Users;
 using FlatPlanet.Security.Application.Interfaces.Services;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
@@ -8,7 +9,9 @@ namespace FlatPlanet.Security.API.Controllers;
 
 [ApiController]
 [Route("api/v1/users")]
-[Authorize]  // base auth required for ALL endpoints; mutating endpoints add AdminAccess below
+// Both schemes accepted: ServiceToken (HubApi calling SP) and JwtBearer (user logged in via hub).
+// Mutating endpoints additionally require the AdminAccess policy below.
+[Authorize(AuthenticationSchemes = "ServiceToken," + JwtBearerDefaults.AuthenticationScheme)]
 public class UserController : ApiController
 {
     private readonly IUserService _users;
@@ -26,6 +29,7 @@ public class UserController : ApiController
 
     // Any authenticated user — needed by project owners (e.g. via hub member-invite UI)
     // to look up existing users by name/email before inviting them to a project.
+    // Also called by HubApi via ServiceToken for member-management flows.
     // Response contains no secrets (no password hash, no tokens) — just profile fields.
     [HttpGet]
     public async Task<IActionResult> GetAll([FromQuery] UserQueryParams query)
@@ -34,7 +38,8 @@ public class UserController : ApiController
         return OkData(result);
     }
 
-    // Any authenticated user — needed when the hub renders a member's display info.
+    // Any authenticated user — needed when the hub renders a member's display info,
+    // and by HubApi (via ServiceToken) when looking up user profile for project members.
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetById(Guid id)
     {
