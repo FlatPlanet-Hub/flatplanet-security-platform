@@ -2,6 +2,8 @@ using System.Security.Claims;
 using System.Text;
 using System.Threading.RateLimiting;
 using FlatPlanet.Security.API.Authentication;
+using FlatPlanet.Security.API.Authorization;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
 using FlatPlanet.Security.API.Middleware;
@@ -82,6 +84,11 @@ builder.Services.AddAuthorization(options =>
         policy.AddAuthenticationSchemes("ServiceToken", JwtBearerDefaults.AuthenticationScheme)
               .RequireRole("platform_owner", "app_admin"));
 });
+
+// Per-service token scope-based authorization. RequireScope("...") attributes
+// resolve via this provider; the ScopeAuthorizationHandler does the actual check.
+builder.Services.AddSingleton<IAuthorizationPolicyProvider, ScopePolicyProvider>();
+builder.Services.AddSingleton<IAuthorizationHandler, ScopeAuthorizationHandler>();
 
 // OpenAPI
 builder.Services.AddOpenApi();
@@ -196,6 +203,7 @@ builder.Services.AddScoped<IPasswordResetTokenRepository, PasswordResetTokenRepo
 builder.Services.AddScoped<IMfaChallengeRepository, MfaChallengeRepository>();
 builder.Services.AddScoped<IMfaBackupCodeRepository, MfaBackupCodeRepository>();
 builder.Services.AddScoped<IIdentityVerificationRepository, IdentityVerificationRepository>();
+builder.Services.AddScoped<IServiceTokenRepository, ServiceTokenRepository>();
 
 // Services
 builder.Services.AddSingleton<IPasswordHasher, BCryptPasswordHasher>();
@@ -224,6 +232,7 @@ builder.Services.AddSingleton<ITotpSecretEncryptor, TotpSecretEncryptor>();
 builder.Services.AddSingleton<ITotpVerifier, TotpVerifier>();
 builder.Services.AddScoped<IMfaService, MfaService>();
 builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationService>();
+builder.Services.AddScoped<IServiceTokenService, ServiceTokenService>();
 builder.Services.AddHostedService<AuditLogCleanupService>();
 
 var app = builder.Build();

@@ -40,4 +40,14 @@ public static class AuditEventType
     public const string IdentityVerificationCompleted = "identity_verification_completed";
     public const string ProfileNameUpdated = "profile_name_updated";
     public const string ProfileEmailUpdated = "profile_email_updated";
+
+    // ── Service tokens (per-service auth) ──────────────────────────────────
+    public const string ServiceTokenMinted        = "service_token_minted";
+    public const string ServiceTokenRevoked       = "service_token_revoked";
+    public const string ServiceTokenScopesChanged = "service_token_scopes_changed";
+    // RESERVED — constant defined for forward-compat; not yet emitted.
+    // To be wired by the first-use-per-day-per-token sampling work (separate PR).
+    public const string ServiceTokenUsed          = "service_token_used";          // sampled: first use per token per UTC day
+    public const string ServiceTokenScopeDenied   = "service_token_scope_denied";  // any 403 from scope mismatch
+    public const string ServiceTokenCacheFlushed  = "service_token_cache_flushed";
 }
