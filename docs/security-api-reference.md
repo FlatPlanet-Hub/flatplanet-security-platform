@@ -1,6 +1,6 @@
 # FlatPlanet Security Platform — API Reference
 
-**Version**: 1.7.0
+**Version**: 1.8.0
 **Base URL**: `https://<your-host>/api/v1`
 **Content-Type**: `application/json`
 **Auth**: Bearer JWT or Service Token in `Authorization` header
@@ -1472,10 +1472,12 @@ Creates a new role for the given app.
 
 ```json
 {
-  "name": "viewer",
+  "name": "user",
   "description": "Read-only access to all resources."
 }
 ```
+
+> **Convention (since v1.8.0):** the canonical per-app role triad is `owner` / `developer` / `user`. Apps registered before v1.8.0 used `viewer` instead of `user` — see V27 migration. Role names are app-scoped and you may define any name you wish, but new apps seeded by HubApi use this triad.
 
 #### Fields
 
@@ -2728,10 +2730,11 @@ GET /api/v1/access-review?companyId=7c9e6679-7425-40de-944b-e07fc1f90ae7&page=1&
 
 ### Versioning
 
-The current API version is `v1`, reflected in all endpoint paths (`/api/v1/...`). The current platform release is **1.7.0**.
+The current API version is `v1`, reflected in all endpoint paths (`/api/v1/...`). The current platform release is **1.8.0**.
 
 | Version | Date | Summary |
 |---|---|---|
+| `1.8.0` | 2026-06-10 | Role streamlining (V27 migration). Per-app `viewer` role renamed to `user` across 48 apps; `developer` role gains `manage_members` permission. Canonical triad is now `owner` / `developer` / `user`. `dashboard-hub` retains its legacy `Admin` / `User` / `Viewer` set (handled in a future pass). All existing grants survive — `user_app_roles` links by role_id (UUID). No JWT or token impact — per-app role names are not in access tokens. |
 | `1.7.0` | 2026-04-20 | TOTP MFA (authenticator app) replaces SMS OTP. New endpoints: TOTP enrol (begin + verify), TOTP login-verify, TOTP email fallback, email-OTP login-verify, email-OTP resend, backup code generate + login-verify, MFA status. Admin endpoints: disable MFA, reset MFA, set MFA method, force-reset-password. `PATCH /api/v1/auth/me` (self-service name + email change; email change revokes all sessions). New audit event types: `mfa_totp_fallback_requested`, `password_reset_forced_by_admin`, `profile_name_updated`, `profile_email_updated` + full MFA event set. `mfaMethod`, `mfaEnrolmentPending`, `mfaEnrolled` added to `LoginResponse`. `mfaEnrolmentPending: true` now returns a restricted enrollment-only `accessToken` (10 min, no refresh). |
 | `1.6.0` | 2026-04-17 | Phase 1 additions: MFA endpoints (enroll, OTP verify, login-verify), identity verification endpoints, admin audit log endpoints. Rate limits documented for change-password (5/15min), forgot-password (3/15min), authorize (60/min). 503 error code added. `requiresMfa` and `challengeId` login response fields. `X-Service-Name` header. AuthZ cache behaviour noted. |
 | `1.5.0` | 2026-04-10 | ISO 27001 features: session enforcement, access review, compliance export, company members. |
