@@ -4,6 +4,25 @@ All notable changes to the FlatPlanet Security Platform are documented here.
 
 ---
 
+## [1.8.1] — 2026-06-10
+
+### Changed
+
+- **Retroactive owner-grant downgrade (V28 migration)** — all 57 existing per-app `owner` grants (54 active + 3 inactive) downgraded to `developer`. Completes the policy change started in V27: `owner` is now a manual escalation tier, granted only when someone explicitly needs `delete_project`. Past project creators no longer carry `delete_project` by default.
+- **dashboard-hub untouched** — its `Admin` / `User` / `Viewer` grants and roles are preserved (continues the V27 carve-out).
+- **Platform owners unaffected** — `platform_owner` (Erick, JL, Chris) retain all destructive powers via the platform-role bypass in `AuthorizationService`. The migration only touches per-app role grants in `user_app_roles`.
+
+### Migration
+
+- **`db/V28__downgrade_owners_to_developers.sql`** — atomic. Snapshots `user_app_roles` to `archive.user_app_roles_pre_v28`. Re-points each owner grant to the developer role within the same app. Four inline assertions verify: no owner grants remain outside dashboard-hub, row count unchanged, dashboard-hub untouched, owner role definitions still present. Rollback recipe in the script footer.
+
+### Notes
+
+- No constraint violations: pre-flight verified no `(user_id, app_id)` had both `owner` and `developer` grants, so the UPDATE produced no duplicates.
+- `owner` role definitions remain on every app — only grants moved. Existing UI/code referring to "owner" continues to work; it just has no holders by default.
+
+---
+
 ## [1.8.0] — 2026-06-10
 
 ### Changed
