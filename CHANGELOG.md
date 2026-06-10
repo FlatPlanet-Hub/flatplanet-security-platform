@@ -4,6 +4,25 @@ All notable changes to the FlatPlanet Security Platform are documented here.
 
 ---
 
+## [1.8.0] — 2026-06-10
+
+### Changed
+
+- **Role streamline (V27 migration)** — per-app `viewer` role renamed to `user` across 48 apps; the `developer` role now also carries the `manage_members` permission. The canonical triad is `owner` / `developer` / `user`. The legacy `Admin` / `User` / `Viewer` set on `dashboard-hub` is intentionally preserved (handled in a future pass). `fp-esignature` (`Admin` / `User` / `Viewer`) is converted to the standard triad.
+- **Description backfill** — roles named `owner`, `developer`, `user` now have human-readable descriptions where they were previously `NULL`. Existing custom descriptions are preserved.
+
+### Migration
+
+- **`db/V27__role_streamline_user.sql`** — atomic migration with inline `archive.roles_pre_v27` / `archive.role_permissions_pre_v27` snapshot tables. Verification assertions roll back the entire transaction on any mismatch (no viewer left outside dashboard-hub, every developer has `manage_members`, rtw-list still has 8 active user grants, dashboard-hub untouched, fp-esignature converted cleanly). Rollback recipe documented in the script footer.
+
+### Notes
+
+- All grants survive — `user_app_roles` links by role_id (UUID), not name.
+- No token impact — per-app role names are not in JWT claims (only platform roles are).
+- API responses returning `roleName` now reflect the new values for renamed apps.
+
+---
+
 ## [1.4.1] — 2026-04-29
 
 ### Fixed
