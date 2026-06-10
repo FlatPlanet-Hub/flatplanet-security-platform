@@ -4,6 +4,65 @@ All notable changes to the FlatPlanet Security Platform are documented here.
 
 ---
 
+## [1.9.0] — 2026-06-11
+
+### Added — Per-service tokens (Phase 1)
+
+Replaces the single shared `ServiceToken__Token` with a database-backed registry of per-service tokens. Each token has its own identity, explicit scope set, and revocable status.
+
+This is **Phase 1**: additive only. The legacy single-token validator path is preserved so HubApi continues to work without any change. Phase 2 (HubApi cutover) and Phase 4 (sunset legacy) ship in separate PRs.
+
+#### New schema
+
+- **`db/V29__service_tokens.sql`** — adds `service_tokens` table with token_hash lookup index (partial on active rows), service_name + token_hash uniqueness, format/status check constraints, and inline DO/RAISE EXCEPTION verification.
+
+#### New auth surface
+
+- **Token format** — `fps_<service-slug>_<43-char base64url of 32 random bytes>`. Stored as hex-encoded SHA-256. Plaintext returned **exactly once** at mint.
+- **Special scope `bootstrap`** — wildcard; matches any `RequireScope` check. Also grants legacy `platform_owner` + `app_admin` claims so existing admin policies pass during the migration. New services get `bootstrap` during onboarding; narrow later.
+- **`ServiceTokenAuthHandler`** — DB lookup first (with 60-second IMemoryCache), legacy single-token fallback second, `NoResult` last.
+- **`RequireScopeAttribute`** + dynamic policy provider + `ScopeAuthorizationHandler` — annotate endpoints with `[RequireScope("users:write")]` to gate service-token callers on a specific scope. User JWTs bypass scope checks (existing role policies still apply).
+
+#### New admin endpoints (`PlatformOwner` only)
+
+- `POST   /api/v1/admin/service-tokens` — mint; returns plaintext once
+- `GET    /api/v1/admin/service-tokens` — list (no plaintext)
+- `GET    /api/v1/admin/service-tokens/{id}` — one
+- `PUT    /api/v1/admin/service-tokens/{id}/scopes` — narrow / change scopes
+- `DELETE /api/v1/admin/service-tokens/{id}` — revoke
+- `POST   /api/v1/admin/service-tokens/{id}/flush-cache` — force immediate cache eviction for urgent revocation
+
+#### Audit log
+
+New event types in `auth_audit_log`:
+
+- `service_token_minted`
+- `service_token_revoked`
+- `service_token_scopes_changed`
+- `service_token_used` (sampled — first use per token per UTC day, future work)
+- `service_token_scope_denied`
+- `service_token_cache_flushed`
+
+#### Documentation
+
+- `docs/runbook-service-tokens.md` — operational guide (mint / list / rotate / revoke / forensics).
+- `docs/security-api-reference.md` bumped to v1.9.0.
+
+#### Tests
+
+- 11 new unit tests in `tests/FlatPlanet.Security.Tests/ServiceTokenServiceTests.cs` covering mint, validate, cache, scope check, revoke, scope update.
+- Full suite: 77/77 passing (was 66 + 11 new).
+
+#### Migration notes
+
+- **No HubApi change required for this PR.** Phase 1 is invisible to HubApi.
+- **Backward compat:** the legacy single-token fallback (matching `appsettings.json:ServiceToken:Token`) is still active. Removed in Phase 4 after all callers have moved.
+- **HubApi cutover (Phase 2, separate PR):** mint a `hub-api` token with `["bootstrap"]` scope, update the `SecurityPlatform__ServiceToken` Azure env var on HubApi, restart. Same impact profile as a routine secret rotation (~60-90s window of HubApi → SP 401s during HubApi restart).
+- **Scope narrowing (Phase 3, separate PR):** update HubApi token from `["bootstrap"]` to the narrow set actually needed. Test each Hub flow. Adding a missing scope = one DB row update, no restart.
+- **Sunset legacy (Phase 4, separate PR):** remove the legacy single-token branch from `ServiceTokenAuthHandler` and clear the `ServiceToken__Token` Azure env vars.
+
+---
+
 ## [1.8.2] — 2026-06-10
 
 ### Fixed
