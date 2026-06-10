@@ -4,6 +4,14 @@ All notable changes to the FlatPlanet Security Platform are documented here.
 
 ---
 
+## [1.8.2] — 2026-06-10
+
+### Fixed
+
+- **CORS allowlist** — added `https://fp-client-proposals.netlify.app` to `Cors:AllowedOrigins` in `appsettings.json`. Without this entry, the new SP-backed login flow on the client-proposals portal failed at the browser CORS preflight (SP returned 204 with no `Access-Control-Allow-Origin` header).
+
+---
+
 ## [1.8.1] — 2026-06-10
 
 ### Changed
