@@ -197,4 +197,63 @@ public class ServiceTokenServiceTests
         var t = new ServiceToken { Status = "revoked", Scopes = ["bootstrap"] };
         Assert.False(t.HasScope("anything"));
     }
+
+    [Fact]
+    public async Task Mint_RejectsUnknownScope()
+    {
+        _repo.Setup(r => r.GetByServiceNameAsync(It.IsAny<string>())).ReturnsAsync((ServiceToken?)null);
+        var svc = Create();
+
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            svc.MintAsync(
+                new MintServiceTokenRequest
+                {
+                    ServiceName = "hub-api",
+                    Scopes = ["users:read", "not-a-real-scope"],
+                },
+                _actingUserId));
+
+        Assert.Contains("not-a-real-scope", ex.Message);
+        _repo.Verify(r => r.CreateAsync(It.IsAny<ServiceToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Mint_AcceptsAllKnownScopes()
+    {
+        _repo.Setup(r => r.GetByServiceNameAsync(It.IsAny<string>())).ReturnsAsync((ServiceToken?)null);
+        _repo.Setup(r => r.CreateAsync(It.IsAny<ServiceToken>()))
+             .ReturnsAsync((ServiceToken t) => { t.Id = Guid.NewGuid(); return t; });
+
+        var svc = Create();
+        var resp = await svc.MintAsync(
+            new MintServiceTokenRequest { ServiceName = "hub-api", Scopes = ServiceTokenScopes.All },
+            _actingUserId);
+
+        Assert.Equal(ServiceTokenScopes.All.Length, resp.Scopes.Length);
+    }
+
+    [Fact]
+    public async Task UpdateScopes_RejectsUnknownScope()
+    {
+        var tokenId = Guid.NewGuid();
+        _repo.Setup(r => r.GetByIdAsync(tokenId)).ReturnsAsync(new ServiceToken
+        {
+            Id = tokenId, ServiceName = "hub-api", TokenHash = "h", Scopes = ["bootstrap"], Status = "active",
+        });
+
+        var svc = Create();
+        var ex = await Assert.ThrowsAsync<ArgumentException>(() =>
+            svc.UpdateScopesAsync(tokenId, ["users:read", "bogus:scope"], _actingUserId));
+
+        Assert.Contains("bogus:scope", ex.Message);
+        _repo.Verify(r => r.UpdateScopesAsync(It.IsAny<Guid>(), It.IsAny<string[]>()), Times.Never);
+    }
+
+    [Fact]
+    public void KnownScopes_IncludesBootstrapSentinel()
+    {
+        Assert.True(ServiceTokenScopes.IsKnown(ServiceToken.BootstrapScope));
+        Assert.True(ServiceTokenScopes.IsKnown("USERS:READ")); // case-insensitive
+        Assert.False(ServiceTokenScopes.IsKnown("nope"));
+    }
 }

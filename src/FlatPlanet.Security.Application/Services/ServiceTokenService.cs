@@ -34,6 +34,8 @@ public class ServiceTokenService : IServiceTokenService
     {
         var serviceName = request.ServiceName.Trim().ToLowerInvariant();
 
+        ValidateScopes(request.Scopes);
+
         var existing = await _repo.GetByServiceNameAsync(serviceName);
         if (existing is not null)
             throw new InvalidOperationException($"A service token already exists for '{serviceName}'. Revoke it first.");
@@ -96,6 +98,7 @@ public class ServiceTokenService : IServiceTokenService
         var existing = await _repo.GetByIdAsync(id)
             ?? throw new KeyNotFoundException($"Service token {id} not found.");
 
+        ValidateScopes(scopes);
         var newScopes = scopes ?? [];
         await _repo.UpdateScopesAsync(id, newScopes);
         // Drop cache so the new scope set takes effect on the next request.
@@ -180,6 +183,16 @@ public class ServiceTokenService : IServiceTokenService
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private static void ValidateScopes(string[]? scopes)
+    {
+        if (scopes is null) return;
+        var unknown = scopes.Where(s => !ServiceTokenScopes.IsKnown(s)).ToArray();
+        if (unknown.Length > 0)
+            throw new ArgumentException(
+                $"Unknown scope(s): {string.Join(", ", unknown)}. See ServiceTokenScopes for the canonical list.",
+                nameof(scopes));
+    }
 
     private static string Sha256Hex(string input)
     {
