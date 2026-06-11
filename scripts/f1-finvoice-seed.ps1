@@ -5,6 +5,8 @@
 .DESCRIPTION
     Idempotent. Safe to re-run. Does NOT migrate passwords — users set their own
     via the SP forgot-password flow (or log in directly via Microsoft/federated path).
+    Re-runs do NOT update existing grants — if a user's SP grant has the wrong role,
+    fix it manually via PUT /api/v1/apps/{appId}/users/{userId}/role.
 
     Step 1 — Register the Finvoice app in SP (skip if slug 'finvoice' already exists).
     Step 2 — Seed 5 roles: admin, editor, reviewer, approver, viewer (skip existing).
@@ -31,7 +33,7 @@
         -CompanyId "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 #>
 
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding()]
 param (
     [Parameter(Mandatory)] [string] $SpAdminToken,
     [Parameter(Mandatory)] [string] $FinvoiceToken,
@@ -97,13 +99,13 @@ if ($finvoiceApp) {
         Write-Dry "Would create app: slug=finvoice, name=Finvoice, companyId=$CompanyId"
         $appId = '00000000-0000-0000-0000-000000000000'
     } else {
-        $created = Invoke-Sp -Method POST -Path '/api/v1/apps' -Body @{
+        $createdApp = Invoke-Sp -Method POST -Path '/api/v1/apps' -Body @{
             companyId = $CompanyId
             name      = 'Finvoice'
             slug      = 'finvoice'
             baseUrl   = 'https://fp-finvoice.netlify.app'
         }
-        $appId = $created.data.id
+        $appId = $createdApp.data.id
         Write-Ok "Created app 'finvoice' — id=$appId"
     }
 }
@@ -172,8 +174,9 @@ $errors   = @()
 
 foreach ($fvUser in $fvUsers) {
     $email    = $fvUser.email.Trim().ToLower()
-    $fullName = $fvUser.name.Trim()
-    $roleName = $fvUser.role.Trim().ToLower()
+    $fullName = (($fvUser.name) ?? '').Trim()
+    $roleName = (($fvUser.role) ?? '').Trim().ToLower()
+    if ([string]::IsNullOrWhiteSpace($fullName)) { $fullName = $email }
 
     # Map unknown roles to viewer for safety
     if (-not $roleMap.ContainsKey($roleName)) {
@@ -223,6 +226,7 @@ foreach ($fvUser in $fvUsers) {
                     userId = $spUserId
                     roleId = $roleMap[$roleName]
                 } | Out-Null
+                $existingGrants += [pscustomobject]@{ userId = $spUserId; roleId = $roleMap[$roleName] }
                 $granted++
                 Write-Ok "Granted $roleName to $email"
             }
