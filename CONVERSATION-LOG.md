@@ -1112,3 +1112,61 @@ All admin controllers gated by `AdminAccess` now carry per-action `[RequireScope
 - HubApi CHANGELOG noting Phase 4 token narrowing (low priority, no code changed)
 - Yuffie regression suite for non-admin user flows (deferred — pre-existing behavior, not changed by Phase 3/4)
 
+---
+
+## Session: 2026-06-11 (continued) — Finvoice → SP Login Migration Plan
+
+Per-Service Tokens (Phases 1–4) closed. Branding for the body of work: **Per-Service Token Scoping (Phases 1–4)** / formal name **Service Token Least-Privilege Migration**.
+
+### Next initiative scoped: Finvoice login migration to SP
+
+User requested analysis of moving Finvoice (`C:\Users\Erick\source\ClaudeCode\finvoice`) from self-rolled PBKDF2 auth to SP. Finvoice baseline:
+- Local PBKDF2-SHA256 (100k iter) verified browser-side, hashes in `project_finvoice.users`
+- MSAL imported and silently-fallback wired in `AuthContext.jsx` (lookup by `msalUser.username` against local users) — there's no "Sign in with Microsoft" button on the Login page yet
+- Session = `sessionUserId` in sessionStorage, 1-hour inactivity timeout
+- 5 roles + per-section `{visible, level}` permissions in local user records
+
+User confirmed SP design intent: even being in an app's user table is NOT enough — SP enforces the app-grant check on login. This is a meaningful security upgrade over current Finvoice.
+
+### Decision: Option B — dual-path zero-downtime migration
+
+Both login methods (SP password + Microsoft) end with an SP-issued JWT. Microsoft path goes *through* a new SP `POST /api/v1/auth/federated-login` endpoint that verifies the Azure AD id_token and enforces the app-grant check. No parallel "MSAL trusts itself" path — all login routes converge on SP's app-grant enforcement.
+
+### Phased plan (Lightning approved)
+
+**F0** — SP federated-login endpoint (SP-side, 1 day). New endpoint accepting `{provider, idToken, appSlug}`, verifies Azure AD id_token via JWKS, looks up SP user by email claim, checks app-grant, skips SP MFA (Azure already did), issues normal SP JWT. Audit log emits `federated_login` event.
+
+**F1** — Mirror Finvoice users into SP (scripted, 2 hr). Register Finvoice app (slug=`finvoice`), setup 5 roles matching current `ROLE_PERMISSIONS`, create SP users for each active Finvoice user (idempotent), grant role per finvoice app. No password migration — users set new SP password on first login.
+
+**F2** — Finvoice Login gets 2 buttons (Finvoice-side, 1 day, flag-gated). Flag = `?newauth=1`. AuthContext priority chain: SP JWT → legacy `sessionUserId` → MSAL silent fallback (deprecated; must gate to existing-session-only so new MSAL logins go through federated-login). New `src/lib/spClient.js`, `src/lib/sessionToken.js`. apiClient gains 401-refresh. auditLog reads identity via priority chain.
+
+**F3** — Flip default (2 hr + 1 week soak). Comms email 3 days prior. Default flips to new flow. Legacy form still reachable at `/login?legacy=1` for 30 days. Rollback = revert flag default (~5 min).
+
+**F4** — Remove legacy PBKDF2 (2 hr). Only when SP audit log shows 100% of active users have logged in via SP at least once. Delete PBKDF2 module, drop password columns, remove legacy form + `?legacy=1`, remove MSAL silent-fallback from AuthContext. Keep MSAL config (still used by Microsoft button).
+
+### Decisions resolved
+- Email matching: case-insensitive, lowercase canonical
+- MSAL user without grant: clear "not authorised" error, no auto-create
+- MFA on Microsoft path: skipped — Azure AD tenant policy trusted
+- Legacy fallback window: 30 days from F3 day 0, no shortening
+- Permission model: stays local in Finvoice — SP owns identity + app-access only
+- SP-down behaviour: already-logged-in users continue, new logins fail — same as every SP app
+
+### Top risks
+1. MSAL silent-fallback could bypass app-grant during F2 — explicit gating required, Yuffie test mandatory
+2. First-time SP password set UX — reuse SP password-reset flow, test with Helen (non-platform-owner) before F3
+3. PH users + SP reset email — confirm SMTP healthy before F3, PlatformOwner force-reset as override
+4. Cold-start SP latency on first login — show "Connecting to SP…" copy if > 3s
+
+### Lightning gate conditions
+1. F0 must ship + be Yuffie-verified on SP before any Finvoice F2 work begins
+2. F2 must remove MSAL silent-fallback for new logins — Yuffie test mandatory
+3. F3 cutover must have user comms 3 days in advance
+4. Legacy form stays full 30 days from F3 day 0 — no shortening
+5. F4 only ships when SP audit log shows 100% of active users have logged in via SP
+
+### Status
+- Plan saved to memory `project_finvoice_sp_migration.md`
+- NOT STARTED — awaiting user "go" to begin F0 on SP side
+- Total effort: ~3 dev-days over ~5-week calendar (most is F3 soak)
+
