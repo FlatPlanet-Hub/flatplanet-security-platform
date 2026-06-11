@@ -31,6 +31,9 @@ public class AzureAdTokenValidator : IAzureAdTokenValidator
     {
         var signingKeys = await GetSigningKeysAsync();
         var handler     = new JwtSecurityTokenHandler();
+        // Disable inbound claim mapping so JWT "email" claim stays as "email"
+        // (default mapping renames it to a long URL and breaks FederatedLoginService lookup).
+        handler.MapInboundClaims = false;
         var parameters  = BuildValidationParameters(signingKeys);
 
         try
@@ -54,10 +57,12 @@ public class AzureAdTokenValidator : IAzureAdTokenValidator
         }
         catch (SecurityTokenSignatureKeyNotFoundException)
         {
-            // Key rotation: evict stale cache and retry once with fresh JWKS
+            // Key rotation: evict stale cache and retry once with fresh JWKS.
+            // Rebuild parameters from scratch (mutating IssuerSigningKeys is unsafe against
+            // internal caching in Microsoft.IdentityModel.Tokens).
             _cache.Remove(JwksCacheKey);
-            parameters.IssuerSigningKeys = await GetSigningKeysAsync();
-            return handler.ValidateToken(idToken, parameters, out _);
+            var freshParameters = BuildValidationParameters(await GetSigningKeysAsync());
+            return handler.ValidateToken(idToken, freshParameters, out _);
         }
     }
 

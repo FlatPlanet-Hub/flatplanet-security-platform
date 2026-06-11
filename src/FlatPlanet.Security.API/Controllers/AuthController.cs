@@ -99,6 +99,8 @@ public class AuthController : ApiController
     {
         if (string.IsNullOrWhiteSpace(request.Provider))
             return FailBadRequest("Provider is required.");
+        if (!string.Equals(request.Provider, "microsoft", StringComparison.OrdinalIgnoreCase))
+            return FailBadRequest("Unsupported provider.");
         if (string.IsNullOrWhiteSpace(request.IdToken))
             return FailBadRequest("Identity token is required.");
         if (string.IsNullOrWhiteSpace(request.AppSlug))

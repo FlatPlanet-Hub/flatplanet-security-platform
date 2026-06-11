@@ -143,10 +143,11 @@ public class FederatedLoginServiceTests
     // ── provider validation ──────────────────────────────────────────────────
 
     [Fact]
-    public async Task FederatedLoginAsync_UnsupportedProvider_ThrowsArgumentException()
+    public async Task FederatedLoginAsync_UnsupportedProvider_ThrowsUnauthorized()
     {
+        // Controller layer is expected to return 400 before this; service uses Unauthorized as a defensive guard.
         var sut = BuildSut();
-        await Assert.ThrowsAsync<ArgumentException>(() =>
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             sut.FederatedLoginAsync(
                 new FederatedLoginRequest { Provider = "google", IdToken = "t", AppSlug = "finvoice" },
                 null, null));
@@ -297,5 +298,55 @@ public class FederatedLoginServiceTests
             sut.FederatedLoginAsync(
                 new FederatedLoginRequest { Provider = "microsoft", IdToken = "bad", AppSlug = "finvoice" },
                 null, null));
+    }
+
+    // ── company suspended ────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task FederatedLoginAsync_SuspendedCompany_ThrowsForbidden()
+    {
+        var user = ActiveUser();
+
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<string>()))
+                  .ReturnsAsync(PrincipalWithEmail(user.Email));
+        _users.Setup(u => u.GetByEmailAsync(user.Email)).ReturnsAsync(user);
+        _companies.Setup(c => c.GetByIdAsync(user.CompanyId))
+                  .ReturnsAsync(new Company { Id = user.CompanyId, Name = "Acme", Status = EntityStatus.Suspended });
+        _audit.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
+
+        var sut = BuildSut();
+        await Assert.ThrowsAsync<ForbiddenException>(() =>
+            sut.FederatedLoginAsync(
+                new FederatedLoginRequest { Provider = "microsoft", IdToken = "t", AppSlug = "finvoice" },
+                null, null));
+
+        _audit.Verify(a => a.LogAsync(It.Is<AuthAuditLog>(l =>
+            l.EventType == AuditEventType.LoginFailure &&
+            l.UserId == user.Id &&
+            l.Details != null && l.Details.Contains("company_suspended"))), Times.Once);
+    }
+
+    // ── P1 #1 regression: email-only claim (no preferred_username) ───────────
+
+    [Fact]
+    public async Task FederatedLoginAsync_TokenWithOnlyEmailClaim_ReturnsLoginResponse()
+    {
+        // Proves AzureAdTokenValidator.MapInboundClaims=false behaviour:
+        // the service must find the "email" claim without it being remapped to a long URL.
+        var user = ActiveUser();
+        var app  = FinvoiceApp();
+        SetupHappyPath(user, app);
+
+        // Override validator to return a principal that ONLY has "email" (no preferred_username).
+        var emailOnly = new ClaimsPrincipal(new ClaimsIdentity(new[] { new Claim("email", user.Email) }));
+        _validator.Setup(v => v.ValidateAsync(It.IsAny<string>())).ReturnsAsync(emailOnly);
+
+        var sut    = BuildSut();
+        var result = await sut.FederatedLoginAsync(
+            new FederatedLoginRequest { Provider = "microsoft", IdToken = "t", AppSlug = "finvoice" },
+            ipAddress: "1.2.3.4", userAgent: "jest");
+
+        Assert.Equal("access-token", result.AccessToken);
+        Assert.Equal(user.Email,     result.User.Email);
     }
 }

@@ -60,8 +60,9 @@ public class FederatedLoginService : IFederatedLoginService
 
     public async Task<LoginResponse> FederatedLoginAsync(FederatedLoginRequest request, string? ipAddress, string? userAgent)
     {
+        // Provider is validated at the controller layer (returns 400). Defensive guard only.
         if (!string.Equals(request.Provider, "microsoft", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException($"Unsupported provider '{request.Provider}'. Only 'microsoft' is supported.");
+            throw new UnauthorizedAccessException($"Unsupported provider '{request.Provider}'.");
 
         var now = DateTime.UtcNow;
 
@@ -212,26 +213,24 @@ public class FederatedLoginService : IFederatedLoginService
 
         var accessToken = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
 
-        // 7. Audit log
-        await Task.WhenAll(
-            _auditLog.LogAsync(new AuthAuditLog
-            {
-                UserId    = user.Id,
-                EventType = AuditEventType.FederatedLogin,
-                IpAddress = ipAddress,
-                UserAgent = userAgent,
-                Details   = JsonSerializer.Serialize(new { provider = request.Provider, app_slug = request.AppSlug })
-            }),
-            _auditLog.LogAsync(new AuthAuditLog
-            {
-                UserId    = user.Id,
-                EventType = AuditEventType.SessionStart,
-                IpAddress = ipAddress,
-                UserAgent = userAgent,
-                Details   = JsonSerializer.Serialize(new { session_id = session.Id })
-            }),
-            _users.UpdateLastSeenAtAsync(user.Id, now)
-        );
+        // 7. Audit log — sequential (Dapper connections aren't thread-safe per scope; match LoginService pattern)
+        await _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId    = user.Id,
+            EventType = AuditEventType.FederatedLogin,
+            IpAddress = ipAddress,
+            UserAgent = userAgent,
+            Details   = JsonSerializer.Serialize(new { provider = request.Provider, app_slug = request.AppSlug })
+        });
+        await _auditLog.LogAsync(new AuthAuditLog
+        {
+            UserId    = user.Id,
+            EventType = AuditEventType.SessionStart,
+            IpAddress = ipAddress,
+            UserAgent = userAgent,
+            Details   = JsonSerializer.Serialize(new { session_id = session.Id })
+        });
+        await _users.UpdateLastSeenAtAsync(user.Id, now);
 
         return new LoginResponse
         {
