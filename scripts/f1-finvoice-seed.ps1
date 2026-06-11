@@ -159,7 +159,7 @@ $fvUsers = Invoke-FvQuery `
     -Sql "SELECT id, email, name, role FROM $FV_SCHEMA.users WHERE is_active = true ORDER BY name" `
     -Parameters @{}
 
-Write-Info "Found $($fvUsers.Count) active Finvoice users"
+Write-Info "Found $(@($fvUsers).Count) active Finvoice users"
 
 if (-not $DryRun) {
     $grantsResp = Invoke-Sp -Method GET -Path "/api/v1/apps/$appId/users"
@@ -172,10 +172,13 @@ $granted  = 0
 $grantSkipped = 0
 $errors   = @()
 
-foreach ($fvUser in $fvUsers) {
+foreach ($fvUser in @($fvUsers)) {
     $email    = $fvUser.email.Trim().ToLower()
-    $fullName = (($fvUser.name) ?? '').Trim()
-    $roleName = (($fvUser.role) ?? '').Trim().ToLower()
+    # Guard property access defensively for StrictMode safety even though the SELECT is explicit.
+    $rawName  = if ($fvUser.PSObject.Properties['name']) { $fvUser.name } else { $null }
+    $rawRole  = if ($fvUser.PSObject.Properties['role']) { $fvUser.role } else { $null }
+    $fullName = ($rawName ?? '').Trim()
+    $roleName = ($rawRole ?? '').Trim().ToLower()
     if ([string]::IsNullOrWhiteSpace($fullName)) { $fullName = $email }
 
     # Map unknown roles to viewer for safety
@@ -220,7 +223,16 @@ foreach ($fvUser in $fvUsers) {
             $alreadyGranted = $existingGrants | Where-Object { $_.userId -eq $spUserId } | Select-Object -First 1
             if ($alreadyGranted) {
                 $grantSkipped++
-                Write-Skip "Grant already exists for $email ($roleName)"
+                # Detect role mismatch — surface it so silent skips don't hide a wrong role assignment.
+                $expectedRoleId = $roleMap[$roleName]
+                $existingRoleId = if ($alreadyGranted.PSObject.Properties['roleId']) { $alreadyGranted.roleId } else { $null }
+                if ($existingRoleId -and $expectedRoleId -and ($existingRoleId -ne $expectedRoleId)) {
+                    $existingRoleName = ($roleMap.GetEnumerator() | Where-Object { $_.Value -eq $existingRoleId } | Select-Object -First 1).Key
+                    if (-not $existingRoleName) { $existingRoleName = $existingRoleId }
+                    Write-Warning "Grant exists for $email but role is $existingRoleName, expected $roleName — fix manually via PUT /api/v1/apps/$appId/users/$spUserId/role"
+                } else {
+                    Write-Skip "Grant already exists for $email ($roleName)"
+                }
             } else {
                 Invoke-Sp -Method POST -Path "/api/v1/apps/$appId/users" -Body @{
                     userId = $spUserId
