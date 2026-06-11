@@ -1091,3 +1091,24 @@ All admin controllers gated by `AdminAccess` now carry per-action `[RequireScope
 - `compliance:write` introduced over `gdpr:write` — aligns with existing `ComplianceController` naming.
 - Invariant uses reflection at boot (fast, <10ms) rather than a compile-time analyzer — simpler with no new tooling dependency.
 
+---
+
+## Session: 2026-06-11 — Per-Service Tokens Phase 1–4 Complete
+
+### What was done
+- Phase 3 shipped: ServiceTokenScopes constants (16 scopes), [RequireScope] annotations on all 46 admin endpoints, AdminAccessScopeInvariant startup boot guard, mint-time scope validation, scope-audit endpoint (GET /api/v1/admin/service-tokens/scope-audit)
+- PRs: #52 (feature → develop), #53 (develop → main). CI run 27316528795: success. Deployed to Azure.
+- Phase 4 shipped: hub-api service token narrowed from ["bootstrap"] to 9 scopes (apps:read, apps:write, users:read, roles:read, roles:write, permissions:read, permissions:write, grants:read, grants:write). Validator cache flushed. No code change — runtime PUT to live SP.
+- Integration tested by Yuffie: 8/8 pass. N1–N4 negative tests confirm scope gate is real (403 on users:mfa, compliance:write, audit:read, PlatformOwner-only).
+
+### Design decisions (permanent)
+- Two-gate model: [Authorize(Policy="AdminAccess")] (class) + [RequireScope] (per-action). User JWTs bypass scope check; only service_token principals are gated by scope.
+- Bootstrap scope satisfies any RequireScope check (legacy compat). Audit endpoint flags these for rotation.
+- AdminAccessScopeInvariant aborts boot if any AdminAccess action lacks [RequireScope].
+- Hub-api token scoped to exactly what it needs — can't escalate to MFA reset, anonymize, audit, or mint new tokens.
+
+### What is NOT done (open items)
+- I6 (Tifa): per-endpoint scope annotations in security-api-reference.md for remaining ~40 endpoints — COMPLETING THIS SESSION
+- HubApi CHANGELOG noting Phase 4 token narrowing (low priority, no code changed)
+- Yuffie regression suite for non-admin user flows (deferred — pre-existing behavior, not changed by Phase 3/4)
+
