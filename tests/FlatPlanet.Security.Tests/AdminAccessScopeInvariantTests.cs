@@ -1,13 +1,6 @@
-using System.Reflection;
 using FlatPlanet.Security.API.Authorization;
-using FlatPlanet.Security.Application.DTOs.ServiceTokens;
-using FlatPlanet.Security.Application.Interfaces.Repositories;
-using FlatPlanet.Security.Application.Services;
-using FlatPlanet.Security.Domain.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Caching.Memory;
-using Moq;
 
 namespace FlatPlanet.Security.Tests;
 
@@ -43,6 +36,15 @@ public class AdminAccessScopeInvariantTests
 
         Assert.Null(ex);
     }
+
+    [Fact]
+    public void Verify_IgnoresAllowAnonymousAction_EvenOnAdminAccessController()
+    {
+        var ex = Record.Exception(() =>
+            AdminAccessScopeInvariant.Verify(new[] { typeof(FakeAllowAnonymousController) }));
+
+        Assert.Null(ex);
+    }
 }
 
 // AdminAccess at class level, action has no [RequireScope] — invariant violation.
@@ -64,4 +66,17 @@ internal sealed class FakeCompliantController : ControllerBase
     [HttpGet]
     [RequireScope("users:read")]
     public IActionResult GoodAction() => Ok();
+}
+
+// AdminAccess at class level, action has [AllowAnonymous] and no [RequireScope].
+// [AllowAnonymous] overrides [Authorize] at runtime, so the action never needs a scope.
+// The invariant must NOT flag this as a violation.
+[ApiController]
+[Route("fake/anonymous")]
+[Authorize(Policy = "AdminAccess")]
+internal sealed class FakeAllowAnonymousController : ControllerBase
+{
+    [HttpGet]
+    [AllowAnonymous]
+    public IActionResult PublicAction() => Ok();
 }

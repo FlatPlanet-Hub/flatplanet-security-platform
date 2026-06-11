@@ -40,6 +40,11 @@ public static class AdminAccessScopeInvariant
 
             foreach (var method in actionMethods)
             {
+                // [AllowAnonymous] overrides every [Authorize] on the action — the
+                // scope gate is irrelevant because the action never runs auth.
+                if (method.GetCustomAttribute<AllowAnonymousAttribute>() is not null)
+                    continue;
+
                 var methodHasAdminAccess = HasAdminAccessPolicy(method.GetCustomAttributes<AuthorizeAttribute>());
                 var actionIsAdminAccess = classHasAdminAccess || methodHasAdminAccess;
 
