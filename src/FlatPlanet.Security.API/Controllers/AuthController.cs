@@ -3,7 +3,6 @@ using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.RateLimiting;
-
 namespace FlatPlanet.Security.API.Controllers;
 
 [ApiController]
@@ -11,10 +10,12 @@ namespace FlatPlanet.Security.API.Controllers;
 public class AuthController : ApiController
 {
     private readonly IAuthService _authService;
+    private readonly IFederatedLoginService _federatedLogin;
 
-    public AuthController(IAuthService authService)
+    public AuthController(IAuthService authService, IFederatedLoginService federatedLogin)
     {
-        _authService = authService;
+        _authService     = authService;
+        _federatedLogin  = federatedLogin;
     }
 
     [HttpPost("login")]
@@ -90,6 +91,24 @@ public class AuthController : ApiController
     {
         await _authService.ForgotPasswordAsync(request);
         return OkMessage("If that email exists, a reset link has been sent.");
+    }
+
+    [EnableRateLimiting("federated-login")]
+    [HttpPost("federated-login")]
+    public async Task<IActionResult> FederatedLogin([FromBody] FederatedLoginRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.Provider))
+            return FailBadRequest("Provider is required.");
+        if (string.IsNullOrWhiteSpace(request.IdToken))
+            return FailBadRequest("Identity token is required.");
+        if (string.IsNullOrWhiteSpace(request.AppSlug))
+            return FailBadRequest("App slug is required.");
+
+        var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
+        var userAgent = Request.Headers.UserAgent.ToString();
+
+        var result = await _federatedLogin.FederatedLoginAsync(request, ipAddress, userAgent);
+        return OkData(result);
     }
 
     [HttpPost("reset-password")]

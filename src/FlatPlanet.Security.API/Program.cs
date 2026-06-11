@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Authentication;
 using FlatPlanet.Security.API.Middleware;
 using FlatPlanet.Security.Application.Common.Options;
+using FlatPlanet.Security.Infrastructure.ExternalServices;
 using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
@@ -37,6 +38,10 @@ builder.Services.Configure<ServiceTokenOptions>(builder.Configuration.GetSection
 builder.Services.Configure<AppOptions>(builder.Configuration.GetSection(AppOptions.Section));
 builder.Services.Configure<SmtpOptions>(builder.Configuration.GetSection(SmtpOptions.Section));
 builder.Services.Configure<MfaOptions>(builder.Configuration.GetSection(MfaOptions.Section));
+builder.Services.AddOptions<AzureAdOptions>()
+    .Bind(builder.Configuration.GetSection(AzureAdOptions.Section))
+    .ValidateDataAnnotations()
+    .ValidateOnStart();
 
 // Database
 builder.Services.AddSingleton<IDbConnectionFactory>(
@@ -183,7 +188,20 @@ builder.Services.AddRateLimiter(options =>
                 PermitLimit = 5,
                 Window = TimeSpan.FromMinutes(1)
             }));
+
+    // federated-login: 10 per min per IP (JWKS validation is cheap; MSAL tokens have short TTL anyway)
+    options.AddPolicy("federated-login", context =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            partitionKey: context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+            factory: _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 10,
+                Window = TimeSpan.FromMinutes(1)
+            }));
 });
+
+// Named HttpClient for Azure AD JWKS — no default timeout override; system default (100s) is fine for key fetches.
+builder.Services.AddHttpClient("AzureAdJwks");
 
 builder.Services.AddHealthChecks();
 
@@ -238,6 +256,8 @@ builder.Services.AddSingleton<ITotpVerifier, TotpVerifier>();
 builder.Services.AddScoped<IMfaService, MfaService>();
 builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationService>();
 builder.Services.AddScoped<IServiceTokenService, ServiceTokenService>();
+builder.Services.AddScoped<IFederatedLoginService, FederatedLoginService>();
+builder.Services.AddSingleton<IAzureAdTokenValidator, AzureAdTokenValidator>();
 builder.Services.AddHostedService<AuditLogCleanupService>();
 
 var app = builder.Build();
