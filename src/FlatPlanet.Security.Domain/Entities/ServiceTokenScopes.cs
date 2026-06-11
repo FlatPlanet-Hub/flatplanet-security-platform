@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+
 namespace FlatPlanet.Security.Domain.Entities;
 
 /// <summary>
@@ -9,6 +11,8 @@ public static class ServiceTokenScopes
 {
     public const string UsersRead = "users:read";
     public const string UsersWrite = "users:write";
+    /// <summary>MFA admin operations (disable, reset, set-method) — higher privilege than users:write.</summary>
+    public const string UsersMfa = "users:mfa";
 
     public const string RolesRead = "roles:read";
     public const string RolesWrite = "roles:write";
@@ -28,18 +32,22 @@ public static class ServiceTokenScopes
 
     public const string AuditRead = "audit:read";
 
-    public static readonly string[] All =
+    /// <summary>Irreversible compliance operations (anonymize). Separate from users:write intentionally.</summary>
+    public const string ComplianceWrite = "compliance:write";
+
+    public static readonly IReadOnlyList<string> All = new[]
     {
-        UsersRead, UsersWrite,
+        UsersRead, UsersWrite, UsersMfa,
         RolesRead, RolesWrite,
         PermissionsRead, PermissionsWrite,
         ResourcesRead, ResourcesWrite,
         GrantsRead, GrantsWrite,
         AppsRead, AppsWrite, AppsAdmin,
         AuditRead,
+        ComplianceWrite,
     };
 
     public static bool IsKnown(string scope) =>
         scope == ServiceToken.BootstrapScope ||
-        Array.Exists(All, s => string.Equals(s, scope, StringComparison.OrdinalIgnoreCase));
+        All.Any(s => string.Equals(s, scope, StringComparison.OrdinalIgnoreCase));
 }

@@ -242,6 +242,10 @@ builder.Services.AddHostedService<AuditLogCleanupService>();
 
 var app = builder.Build();
 
+// Fail boot if any AdminAccess-gated action is missing [RequireScope].
+// See AdminAccessScopeInvariant for rationale.
+AdminAccessScopeInvariant.Verify(typeof(Program).Assembly);
+
 // DB pre-warm intentionally removed:
 // Opening connections before app.Run() blocks Azure's warmup probe → 503/504 on cold start.
 // Pool Size=0 (default) — connections are opened on first request and released when idle.

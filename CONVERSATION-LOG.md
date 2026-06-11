@@ -1020,3 +1020,74 @@ The actual fix for today's pattern is **per-project rate limiting on HubApi `/qu
 | 9 | Catch `BadHttpRequestException` in `GlobalExceptionMiddleware` | Log at Debug, not Error — these are client cancellations, not bugs |
 | 10 | Background DB pool warm-up service (SP) | Only if post-restart slowness persists after PR #39 — currently shelved |
 
+---
+
+## Session: Per-Service Tokens Phase 3 — SP Side Complete
+
+**Date**: 2026-06-11
+**Branch**: `feature/per-service-tokens-phase-3-4` (from `develop`, not yet pushed)
+
+---
+
+### What Was Done
+
+#### 1. Phase 3 scope annotations — 13 admin controllers
+
+All admin controllers gated by `AdminAccess` now carry per-action `[RequireScope("...")]` attributes:
+
+| Controller | Scope(s) |
+|---|---|
+| `AppController` | `apps:read`, `apps:write`, `apps:admin` |
+| `RoleController` | `roles:read`, `roles:write` |
+| `PermissionController` | `permissions:read`, `permissions:write` |
+| `ResourceController` / `ResourceTypeController` | `resources:read`, `resources:write` |
+| `UserController` | `users:read`, `users:write` |
+| `UserAccessController` | `grants:read`, `grants:write` |
+| `AdminMfaController` | `users:mfa` (split from `users:write` — higher privilege) |
+| `AdminUserController` | `users:write` |
+| `AccessReviewController` | `audit:read` |
+| `AuditController` | `audit:read` |
+| `ComplianceController` | `audit:read` (export), `compliance:write` (anonymize — split from `users:write`) |
+| `OffboardingController` | `users:write` |
+
+#### 2. Authorization design
+
+- `ScopeAuthorizationHandler`: user JWTs bypass scope check; only `service_token` principals are gated.
+- `AdminAccess` policy extended to also admit `service_token` role. Without this, narrow-scoped tokens 403 at the policy gate before reaching the scope handler.
+- Two-gate model: role policy = who can call; scope = which service can call which action.
+
+#### 3. Safety nets
+
+- `ServiceTokenScopes` constants class (Domain layer) — canonical list of all 16 scopes. Prevents typo-scopes silently matching nothing.
+- `ServiceTokenService.Mint` and `UpdateScopes` reject unknown scopes with `ArgumentException` at the service boundary.
+- `AdminAccessScopeInvariant.Verify(Assembly)` — called at startup; throws if any `AdminAccess`-gated action lacks `[RequireScope]`. Prevents future regressions silently opening admin endpoints to unscoped service tokens.
+
+#### 4. Scope audit endpoint
+
+`GET /api/v1/admin/service-tokens/scope-audit` (PlatformOwner-gated) — lists tokens whose stored scopes contain values outside the canonical list. Surfaces legacy tokens minted before validation was enforced.
+
+#### 5. New scopes added (Lightning review findings)
+
+- `users:mfa` — MFA admin operations separated from `users:write`. MFA reset effectively bypasses MFA — stricter gate.
+- `compliance:write` — irreversible anonymize operation separated from `users:write`.
+
+#### 6. Tests
+
+92 unit tests pass. New tests added:
+- `ScopeAuthorizationHandlerTests` — user JWT bypass, service token exact scope, bootstrap wildcard, case-insensitivity, missing scope, unauthenticated.
+- `ServiceTokenServiceTests` — scope validation on Mint/UpdateScopes, audit unknown scopes.
+- `AdminAccessScopeInvariantTests` — invariant passes clean assembly, detects violations, accepts compliant controllers.
+
+### What Was NOT Done (Phase 4)
+
+- HubApi-side narrow token issuance — lives in hubapi repo.
+- Minting per-consumer narrow-scoped tokens to replace bootstrap.
+- End-to-end integration test from real hubapi container.
+- Push branch / PR to develop (user gates that).
+
+### Decisions
+
+- `users:mfa` introduced over `users:admin` — more descriptive for external consumers.
+- `compliance:write` introduced over `gdpr:write` — aligns with existing `ComplianceController` naming.
+- Invariant uses reflection at boot (fast, <10ms) rather than a compile-time analyzer — simpler with no new tooling dependency.
+

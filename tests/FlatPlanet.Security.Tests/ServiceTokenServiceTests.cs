@@ -226,10 +226,10 @@ public class ServiceTokenServiceTests
 
         var svc = Create();
         var resp = await svc.MintAsync(
-            new MintServiceTokenRequest { ServiceName = "hub-api", Scopes = ServiceTokenScopes.All },
+            new MintServiceTokenRequest { ServiceName = "hub-api", Scopes = ServiceTokenScopes.All.ToArray() },
             _actingUserId);
 
-        Assert.Equal(ServiceTokenScopes.All.Length, resp.Scopes.Length);
+        Assert.Equal(ServiceTokenScopes.All.Count, resp.Scopes.Length);
     }
 
     [Fact]
@@ -254,6 +254,41 @@ public class ServiceTokenServiceTests
     {
         Assert.True(ServiceTokenScopes.IsKnown(ServiceToken.BootstrapScope));
         Assert.True(ServiceTokenScopes.IsKnown("USERS:READ")); // case-insensitive
+        Assert.True(ServiceTokenScopes.IsKnown("users:mfa"));
+        Assert.True(ServiceTokenScopes.IsKnown("compliance:write"));
         Assert.False(ServiceTokenScopes.IsKnown("nope"));
+    }
+
+    [Fact]
+    public async Task AuditUnknownScopes_ReturnsBadTokens_IgnoresGoodOnes()
+    {
+        _repo.Setup(r => r.GetAllAsync()).ReturnsAsync(new[]
+        {
+            new ServiceToken { Id = Guid.NewGuid(), ServiceName = "clean",   Scopes = ["users:read", "bootstrap"] },
+            new ServiceToken { Id = Guid.NewGuid(), ServiceName = "legacy",  Scopes = ["old-custom-scope", "users:read"] },
+            new ServiceToken { Id = Guid.NewGuid(), ServiceName = "bad",     Scopes = ["totally-wrong"] },
+        });
+
+        var svc = Create();
+        var result = await svc.AuditUnknownScopesAsync();
+
+        Assert.Equal(2, result.Count);
+        Assert.Contains(result, r => r.ServiceName == "legacy" && r.UnknownScopes.Contains("old-custom-scope"));
+        Assert.Contains(result, r => r.ServiceName == "bad"    && r.UnknownScopes.Contains("totally-wrong"));
+    }
+
+    [Fact]
+    public async Task AuditUnknownScopes_ReturnsEmpty_WhenAllTokensAreClean()
+    {
+        _repo.Setup(r => r.GetAllAsync()).ReturnsAsync(new[]
+        {
+            new ServiceToken { Id = Guid.NewGuid(), ServiceName = "hub-api", Scopes = ["bootstrap"] },
+            new ServiceToken { Id = Guid.NewGuid(), ServiceName = "worker",  Scopes = ["users:read", "audit:read"] },
+        });
+
+        var svc = Create();
+        var result = await svc.AuditUnknownScopesAsync();
+
+        Assert.Empty(result);
     }
 }

@@ -32,7 +32,7 @@ public class ComplianceController : ApiController
 
     [HttpPost("{id:guid}/anonymize")]
     [Authorize(Policy = "AdminAccess")]
-    [RequireScope("users:write")]
+    [RequireScope("compliance:write")]
     public async Task<IActionResult> Anonymize(Guid id)
     {
         var requestedBy = GetUserId();

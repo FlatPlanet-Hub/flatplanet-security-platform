@@ -95,10 +95,10 @@ public class ServiceTokenService : IServiceTokenService
 
     public async Task UpdateScopesAsync(Guid id, string[] scopes, Guid actingUserId)
     {
+        ValidateScopes(scopes);
+
         var existing = await _repo.GetByIdAsync(id)
             ?? throw new KeyNotFoundException($"Service token {id} not found.");
-
-        ValidateScopes(scopes);
         var newScopes = scopes ?? [];
         await _repo.UpdateScopesAsync(id, newScopes);
         // Drop cache so the new scope set takes effect on the next request.
@@ -146,6 +146,26 @@ public class ServiceTokenService : IServiceTokenService
         var existing = await _repo.GetByIdAsync(id);
         if (existing is null) return;
         _cache.Remove(CacheKeyHash(existing.TokenHash));
+    }
+
+    public async Task<IReadOnlyList<UnknownScopeAuditEntry>> AuditUnknownScopesAsync()
+    {
+        var all = await _repo.GetAllAsync();
+        return all
+            .Select(t => new
+            {
+                t.Id,
+                t.ServiceName,
+                Unknown = t.Scopes.Where(s => !ServiceTokenScopes.IsKnown(s)).ToArray(),
+            })
+            .Where(x => x.Unknown.Length > 0)
+            .Select(x => new UnknownScopeAuditEntry
+            {
+                Id = x.Id,
+                ServiceName = x.ServiceName,
+                UnknownScopes = x.Unknown,
+            })
+            .ToList();
     }
 
     public async Task<ServiceToken?> ValidateAsync(string plaintextToken)

@@ -16,7 +16,7 @@ public class AdminMfaController : ApiController
     public AdminMfaController(IMfaService mfa) => _mfa = mfa;
 
     [HttpPost("{userId}/disable")]
-    [RequireScope("users:write")]
+    [RequireScope("users:mfa")]
     public async Task<IActionResult> DisableMfa(Guid userId)
     {
         await _mfa.DisableMfaAsync(userId);
@@ -24,7 +24,7 @@ public class AdminMfaController : ApiController
     }
 
     [HttpPost("{userId}/reset")]
-    [RequireScope("users:write")]
+    [RequireScope("users:mfa")]
     public async Task<IActionResult> ResetMfa(Guid userId)
     {
         await _mfa.ResetMfaAsync(userId);
@@ -32,7 +32,7 @@ public class AdminMfaController : ApiController
     }
 
     [HttpPost("{userId}/set-method")]
-    [RequireScope("users:write")]
+    [RequireScope("users:mfa")]
     public async Task<IActionResult> SetMfaMethod(Guid userId, [FromBody] SetMfaMethodRequest request)
     {
         await _mfa.SetMfaMethodAsync(userId, request.Method, GetUserId());
