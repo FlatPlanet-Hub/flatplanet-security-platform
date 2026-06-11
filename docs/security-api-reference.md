@@ -27,7 +27,11 @@ Tokens are issued by `POST /api/v1/auth/login` and rotated by `POST /api/v1/auth
 Authorization: Bearer <service-token>
 ```
 
-Used by trusted backend services (e.g. HubApi) to call the platform without a user context. The service token is a static secret configured in `appsettings.json` under `ServiceToken.Token` (minimum 32 characters). On a valid service token, the caller is granted both `platform_owner` and `app_admin` roles — it has full access to all endpoints. Token comparison uses constant-time equality to prevent timing attacks.
+Used by trusted backend services (e.g. HubApi) to call the platform without a user context.
+
+**Per-service tokens (preferred):** minted via `POST /api/v1/admin/service-tokens` and stored as SHA-256 hashes. Each token carries a set of scopes that limit which admin endpoints it may call. A token with `bootstrap` scope has full access (legacy/onboarding use only). See [Service Token Scopes](#service-token-scopes) below.
+
+**Legacy shared token (deprecated):** a static secret configured in `appsettings.json` under `ServiceToken.Token`. Treated as bootstrap-scoped — full access. Retained for backward compatibility during migration.
 
 Optionally include an `X-Service-Name` header to identify the calling service in audit log entries. If omitted, the service name is recorded as `"unknown"`.
 
@@ -51,9 +55,33 @@ When either fires, the client must re-authenticate via `POST /api/v1/auth/login`
 
 | Policy | Who it applies to |
 |---|---|
-| `AdminAccess` | Users with `app_admin` or `platform_owner` platform role |
-| `PlatformOwner` | Users with `platform_owner` platform role only |
+| `AdminAccess` | Users with `app_admin` or `platform_owner` role, **or** any per-service token. Service tokens are further gated per-endpoint by a required scope (see below). |
+| `PlatformOwner` | Users with `platform_owner` role only. Service tokens are not admitted. |
 | *(no policy)* | Any authenticated user |
+
+### Service Token Scopes
+
+Admin endpoints that admit per-service tokens additionally require a matching scope claim. A token must carry the listed scope (or `bootstrap`) to reach the endpoint.
+
+| Scope | What it covers |
+|---|---|
+| `users:read` | Read user records |
+| `users:write` | Create/update user records, status changes |
+| `users:mfa` | Admin MFA operations (disable, reset, set method) — higher privilege than `users:write` |
+| `roles:read` | List/get roles |
+| `roles:write` | Create/update/delete roles and role-permission assignments |
+| `permissions:read` | List/get permissions |
+| `permissions:write` | Create/update permissions |
+| `resources:read` | List/get resources and resource types |
+| `resources:write` | Create/update resources and resource types |
+| `grants:read` | Read user-app-role grants |
+| `grants:write` | Assign/update/revoke grants |
+| `apps:read` | List/get apps |
+| `apps:write` | Create/update apps |
+| `apps:admin` | Delete apps |
+| `audit:read` | Read audit logs and compliance exports |
+| `compliance:write` | Irreversible compliance operations (anonymize user data) |
+| `bootstrap` | Wildcard — satisfies any scope check. For legacy tokens and onboarding only. |
 
 ---
 
@@ -1019,6 +1047,7 @@ GET /api/v1/users/3f2504e0-4f89-11d3-9a0c-0305e82c3301/export
 Irreversibly anonymizes a user's PII (nulls email, name, IP fields). Ends all active sessions and revokes all refresh tokens. Cannot be undone.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `compliance:write`
 
 #### Request
 
@@ -2234,6 +2263,7 @@ Admin endpoints for managing user MFA. All require `AdminAccess` policy (`platfo
 Disables MFA for the specified user. The user will no longer be prompted for MFA at login.
 
 **Auth required**: Yes — `AdminAccess` policy
+**Service token scope required**: `users:mfa`
 
 #### Request
 
@@ -2260,6 +2290,7 @@ No body required.
 Resets MFA for the specified user. Clears TOTP secret, backup codes, and MFA method. The user must re-enroll on their next login.
 
 **Auth required**: Yes — `AdminAccess` policy
+**Service token scope required**: `users:mfa`
 
 #### Request
 
@@ -2278,6 +2309,7 @@ No body required.
 Sets the MFA method for the specified user. Use this to switch a user between `email_otp` and `totp`.
 
 **Auth required**: Yes — `AdminAccess` policy
+**Service token scope required**: `users:mfa`
 
 #### Request
 

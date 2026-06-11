@@ -1,3 +1,4 @@
+using FlatPlanet.Security.API.Authorization;
 using FlatPlanet.Security.Application.DTOs.Mfa;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -15,6 +16,7 @@ public class AdminMfaController : ApiController
     public AdminMfaController(IMfaService mfa) => _mfa = mfa;
 
     [HttpPost("{userId}/disable")]
+    [RequireScope("users:mfa")]
     public async Task<IActionResult> DisableMfa(Guid userId)
     {
         await _mfa.DisableMfaAsync(userId);
@@ -22,6 +24,7 @@ public class AdminMfaController : ApiController
     }
 
     [HttpPost("{userId}/reset")]
+    [RequireScope("users:mfa")]
     public async Task<IActionResult> ResetMfa(Guid userId)
     {
         await _mfa.ResetMfaAsync(userId);
@@ -29,6 +32,7 @@ public class AdminMfaController : ApiController
     }
 
     [HttpPost("{userId}/set-method")]
+    [RequireScope("users:mfa")]
     public async Task<IActionResult> SetMfaMethod(Guid userId, [FromBody] SetMfaMethodRequest request)
     {
         await _mfa.SetMfaMethodAsync(userId, request.Method, GetUserId());

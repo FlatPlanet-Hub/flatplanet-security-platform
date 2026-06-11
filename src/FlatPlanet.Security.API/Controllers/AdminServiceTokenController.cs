@@ -101,4 +101,17 @@ public sealed class AdminServiceTokenController : ApiController
         await _service.FlushCacheAsync(id);
         return OkMessage("Validator cache flushed for this token.");
     }
+
+    /// <summary>
+    /// Returns any existing tokens whose stored scopes contain values not in the
+    /// canonical ServiceTokenScopes list. Useful for auditing tokens minted before
+    /// the scope allow-list was enforced (Phase 1/2 legacy tokens).
+    /// </summary>
+    [HttpGet("scope-audit")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> ScopeAudit()
+    {
+        var findings = await _service.AuditUnknownScopesAsync();
+        return OkData(findings);
+    }
 }

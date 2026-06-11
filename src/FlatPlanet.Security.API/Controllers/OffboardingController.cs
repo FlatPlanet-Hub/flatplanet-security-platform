@@ -1,3 +1,4 @@
+using FlatPlanet.Security.API.Authorization;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,6 +15,7 @@ public class OffboardingController : ApiController
     public OffboardingController(IOffboardingService offboarding) => _offboarding = offboarding;
 
     [HttpPost("{id:guid}/offboard")]
+    [RequireScope("users:write")]
     public async Task<IActionResult> Offboard(Guid id)
     {
         var requestedBy = GetUserId();

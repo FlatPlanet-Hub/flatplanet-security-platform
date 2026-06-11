@@ -1,3 +1,4 @@
+using FlatPlanet.Security.API.Authorization;
 using FlatPlanet.Security.Application.DTOs.Audit;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using Microsoft.AspNetCore.Authorization;
@@ -15,6 +16,7 @@ public class AuditController : ApiController
     public AuditController(IAuditLogRepository auditLog) => _auditLog = auditLog;
 
     [HttpGet]
+    [RequireScope("audit:read")]
     public async Task<IActionResult> Query([FromQuery] AuditQueryParams p)
     {
         if (p.Page < 1) p.Page = 1;

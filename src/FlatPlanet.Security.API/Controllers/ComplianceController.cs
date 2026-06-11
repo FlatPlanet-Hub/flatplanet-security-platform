@@ -1,3 +1,4 @@
+using FlatPlanet.Security.API.Authorization;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -13,7 +14,10 @@ public class ComplianceController : ApiController
 
     public ComplianceController(IComplianceService compliance) => _compliance = compliance;
 
+    // Compliance export: any user can pull their own data; admins / audit:read
+    // service tokens can pull anyone's.
     [HttpGet("{id:guid}/export")]
+    [RequireScope("audit:read")]
     public async Task<IActionResult> Export(Guid id)
     {
         var callerId = GetUserId();
@@ -28,6 +32,7 @@ public class ComplianceController : ApiController
 
     [HttpPost("{id:guid}/anonymize")]
     [Authorize(Policy = "AdminAccess")]
+    [RequireScope("compliance:write")]
     public async Task<IActionResult> Anonymize(Guid id)
     {
         var requestedBy = GetUserId();

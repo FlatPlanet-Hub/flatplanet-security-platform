@@ -1,3 +1,4 @@
+using FlatPlanet.Security.API.Authorization;
 using FlatPlanet.Security.Application.DTOs.Admin;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -15,6 +16,7 @@ public class UserAccessController : ApiController
     public UserAccessController(IUserAccessService userAccess) => _userAccess = userAccess;
 
     [HttpGet]
+    [RequireScope("grants:read")]
     public async Task<IActionResult> GetAll(Guid appId)
     {
         var result = await _userAccess.GetByAppIdAsync(appId);
@@ -22,6 +24,7 @@ public class UserAccessController : ApiController
     }
 
     [HttpPost]
+    [RequireScope("grants:write")]
     public async Task<IActionResult> GrantAccess(Guid appId, [FromBody] GrantUserAccessRequest request)
     {
         var grantedBy = GetUserId();
@@ -30,6 +33,7 @@ public class UserAccessController : ApiController
     }
 
     [HttpPut("{userId:guid}/role")]
+    [RequireScope("grants:write")]
     public async Task<IActionResult> UpdateRole(Guid appId, Guid userId, [FromBody] UpdateUserRoleRequest request)
     {
         await _userAccess.UpdateRoleAsync(appId, userId, request.RoleId);
@@ -37,6 +41,7 @@ public class UserAccessController : ApiController
     }
 
     [HttpDelete("{userId:guid}")]
+    [RequireScope("grants:write")]
     public async Task<IActionResult> RevokeAccess(Guid appId, Guid userId)
     {
         await _userAccess.RevokeAccessAsync(appId, userId);

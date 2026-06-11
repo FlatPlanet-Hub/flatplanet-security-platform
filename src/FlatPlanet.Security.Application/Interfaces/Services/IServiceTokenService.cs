@@ -25,6 +25,13 @@ public interface IServiceTokenService
     Task FlushCacheAsync(Guid id);
 
     /// <summary>
+    /// Returns tokens whose stored scopes contain values outside the canonical
+    /// ServiceTokenScopes list. Used to surface legacy tokens minted before
+    /// scope validation was enforced.
+    /// </summary>
+    Task<IReadOnlyList<UnknownScopeAuditEntry>> AuditUnknownScopesAsync();
+
+    /// <summary>
     /// Validate a plaintext bearer token. Returns the matching service token if active,
     /// otherwise null. Bumps last_used_at fire-and-forget. Cached in IMemoryCache for 60s.
     /// </summary>

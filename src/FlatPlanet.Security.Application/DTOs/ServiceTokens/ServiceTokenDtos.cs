@@ -50,3 +50,10 @@ public class UpdateScopesRequest
     [Required]
     public string[] Scopes { get; set; } = [];
 }
+
+public class UnknownScopeAuditEntry
+{
+    public Guid Id { get; set; }
+    public string ServiceName { get; set; } = string.Empty;
+    public string[] UnknownScopes { get; set; } = [];
+}
