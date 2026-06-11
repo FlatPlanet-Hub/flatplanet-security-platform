@@ -762,6 +762,7 @@ All user endpoints require `AdminAccess` policy except where noted.
 Returns a paginated list of users with optional filtering.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `users:read`
 
 #### Query Parameters
 
@@ -811,6 +812,7 @@ GET /api/v1/users?page=1&pageSize=20&status=active&search=alice
 Returns full user detail including all app role assignments.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `users:read`
 
 #### Request
 
@@ -860,6 +862,7 @@ GET /api/v1/users/3f2504e0-4f89-11d3-9a0c-0305e82c3301
 Creates a new user with a bcrypt-hashed password. The platform owns credential storage — no external auth provider is involved.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `users:write`
 
 #### Request
 
@@ -915,6 +918,7 @@ Creates a new user with a bcrypt-hashed password. The platform owns credential s
 Updates a user's name and role title.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `users:write`
 
 #### Request
 
@@ -949,6 +953,7 @@ Returns the updated `UserResponse` (same shape as `GET /api/v1/users/{id}` witho
 Updates a user's status.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `users:write`
 
 #### Request
 
@@ -982,6 +987,7 @@ Updates a user's status.
 Offboards a user: revokes all sessions and refresh tokens, removes all app role assignments, and logs the event.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `users:write`
 
 #### Request
 
@@ -1006,6 +1012,7 @@ No body.
 Returns all personal data held for a user (GDPR data export). A user may export their own data; admins may export any user's data.
 
 **Auth required**: Yes — `AdminAccess` for other users; any authenticated user for their own `id`.
+**Service token scope required**: `audit:read`
 
 #### Request
 
@@ -1357,6 +1364,7 @@ All app endpoints require `AdminAccess` policy.
 Returns all registered apps.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `apps:read`
 
 #### Success Response — 200
 
@@ -1384,6 +1392,7 @@ Returns all registered apps.
 Returns a single app by ID.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `apps:read`
 
 #### Error Responses
 
@@ -1398,6 +1407,7 @@ Returns a single app by ID.
 Registers a new app. Default status is `active`.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `apps:write`
 
 #### Request
 
@@ -1436,6 +1446,7 @@ Returns the created `AppResponse` at `Location: /api/v1/apps/{id}`.
 Updates an app's name, base URL, and status.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `apps:write`
 
 #### Request
 
@@ -1470,6 +1481,7 @@ All role endpoints require `AdminAccess` policy. Roles are scoped to an app.
 Returns all roles for the given app.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `roles:read`
 
 #### Success Response — 200
 
@@ -1496,6 +1508,7 @@ Returns all roles for the given app.
 Creates a new role for the given app.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `roles:write`
 
 #### Request
 
@@ -1532,6 +1545,7 @@ Returns the created `RoleResponse`.
 Updates a role's name and description.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `roles:write`
 
 #### Request
 
@@ -1556,6 +1570,7 @@ Updates a role's name and description.
 Deletes a role. Fails if any users are currently assigned to it.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `roles:write`
 
 #### Success Response — 200
 
@@ -1578,6 +1593,7 @@ Deletes a role. Fails if any users are currently assigned to it.
 Assigns a permission to a role.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `roles:write`
 
 #### Request
 
@@ -1605,6 +1621,9 @@ Assigns a permission to a role.
 Removes a permission from a role.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `roles:write`
+
+**Auth required**: Yes — `AdminAccess`
 
 #### Success Response — 200
 
@@ -1624,11 +1643,17 @@ All permission endpoints require `AdminAccess` policy. Permissions are scoped to
 
 Returns all permissions for the given app.
 
+**Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `permissions:read`
+
 ---
 
 ### POST /api/v1/apps/{appId}/permissions
 
 Creates a permission.
+
+**Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `permissions:write`
 
 #### Request
 
@@ -1657,6 +1682,9 @@ Returns the created `PermissionResponse` (`id`, `appId`, `name`, `description`, 
 ### PUT /api/v1/apps/{appId}/permissions/{id}
 
 Updates a permission's name, description, and category.
+
+**Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `permissions:write`
 
 #### Request
 
@@ -1688,11 +1716,17 @@ All resource endpoints require `AdminAccess` policy. Resources are scoped to an 
 
 Returns all resources for the given app.
 
+**Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `resources:read`
+
 ---
 
 ### POST /api/v1/apps/{appId}/resources
 
 Creates a resource.
+
+**Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `resources:write`
 
 #### Request
 
@@ -1722,6 +1756,9 @@ Returns the created `ResourceResponse` (`id`, `appId`, `resourceTypeId`, `name`,
 ### PUT /api/v1/apps/{appId}/resources/{id}
 
 Updates a resource's name, identifier, and status.
+
+**Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `resources:write`
 
 #### Request
 
@@ -1753,11 +1790,17 @@ Require `AdminAccess` policy.
 
 Returns all resource types.
 
+**Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `resources:read`
+
 ---
 
 ### POST /api/v1/resource-types
 
 Creates a resource type.
+
+**Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `resources:write`
 
 #### Request
 
@@ -1792,6 +1835,7 @@ All endpoints require `AdminAccess` policy. Manages which users have roles withi
 Returns all active user-role grants for the given app.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `grants:read`
 
 ---
 
@@ -1800,6 +1844,7 @@ Returns all active user-role grants for the given app.
 Grants a user a role within an app.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `grants:write`
 
 #### Request
 
@@ -1850,6 +1895,7 @@ Returns the created `UserAccessResponse`:
 Changes a user's role within an app.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `grants:write`
 
 #### Request
 
@@ -1870,6 +1916,7 @@ Changes a user's role within an app.
 Revokes a user's access to an app.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `grants:write`
 
 #### Success Response — 200
 
@@ -2349,6 +2396,7 @@ Admin endpoints for user management. All require `AdminAccess` policy (`platform
 Forces a password reset for the specified user by sending a password reset email on their behalf. Use this from the admin panel when a user is locked out or requests an admin-initiated reset.
 
 **Auth required**: Yes — `AdminAccess` policy
+**Service token scope required**: `users:write`
 
 #### Request
 
@@ -2537,6 +2585,7 @@ Returns a single admin audit log entry with full before/after state.
 Returns a paginated audit log with optional filters.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `audit:read`
 
 #### Query Parameters
 
@@ -2647,6 +2696,7 @@ Updates a single security configuration value. All values are stored as strings.
 Returns all active app role grants for ISO 27001 periodic access review. Includes how long each grant has been active, enabling identification of stale access.
 
 **Auth required**: Yes — `AdminAccess`
+**Service token scope required**: `audit:read`
 
 #### Query Parameters
 
