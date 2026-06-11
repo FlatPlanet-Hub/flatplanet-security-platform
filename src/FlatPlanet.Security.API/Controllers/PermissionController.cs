@@ -1,3 +1,4 @@
+using FlatPlanet.Security.API.Authorization;
 using FlatPlanet.Security.Application.DTOs.Admin;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -15,6 +16,7 @@ public class PermissionController : ApiController
     public PermissionController(IPermissionService permissions) => _permissions = permissions;
 
     [HttpGet]
+    [RequireScope("permissions:read")]
     public async Task<IActionResult> GetAll(Guid appId)
     {
         var result = await _permissions.GetByAppIdAsync(appId);
@@ -22,6 +24,7 @@ public class PermissionController : ApiController
     }
 
     [HttpPost]
+    [RequireScope("permissions:write")]
     public async Task<IActionResult> Create(Guid appId, [FromBody] CreatePermissionRequest request)
     {
         var result = await _permissions.CreateAsync(appId, request);
@@ -29,6 +32,7 @@ public class PermissionController : ApiController
     }
 
     [HttpPut("{id:guid}")]
+    [RequireScope("permissions:write")]
     public async Task<IActionResult> Update(Guid appId, Guid id, [FromBody] UpdatePermissionRequest request)
     {
         var result = await _permissions.UpdateAsync(appId, id, request);

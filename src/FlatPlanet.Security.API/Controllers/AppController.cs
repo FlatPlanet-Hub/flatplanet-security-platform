@@ -1,3 +1,4 @@
+using FlatPlanet.Security.API.Authorization;
 using FlatPlanet.Security.Application.DTOs.Admin;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -15,6 +16,7 @@ public class AppController : ApiController
     public AppController(IAppService apps) => _apps = apps;
 
     [HttpGet]
+    [RequireScope("apps:read")]
     public async Task<IActionResult> GetAll()
     {
         var result = await _apps.GetAllAsync();
@@ -22,6 +24,7 @@ public class AppController : ApiController
     }
 
     [HttpGet("{id:guid}")]
+    [RequireScope("apps:read")]
     public async Task<IActionResult> GetById(Guid id)
     {
         var result = await _apps.GetByIdAsync(id);
@@ -29,6 +32,7 @@ public class AppController : ApiController
     }
 
     [HttpPost]
+    [RequireScope("apps:write")]
     public async Task<IActionResult> Create([FromBody] CreateAppRequest request)
     {
         var userId = GetUserId();
@@ -37,6 +41,7 @@ public class AppController : ApiController
     }
 
     [HttpPut("{id:guid}")]
+    [RequireScope("apps:write")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateAppRequest request)
     {
         var result = await _apps.UpdateAsync(id, request);
@@ -44,6 +49,7 @@ public class AppController : ApiController
     }
 
     [HttpDelete("{id:guid}")]
+    [RequireScope("apps:admin")]
     public async Task<IActionResult> Delete(Guid id)
     {
         await _apps.DeleteAsync(id);

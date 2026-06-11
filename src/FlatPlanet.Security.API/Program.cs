@@ -80,9 +80,14 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("PlatformOwner", policy =>
         policy.AddAuthenticationSchemes("ServiceToken", JwtBearerDefaults.AuthenticationScheme)
               .RequireRole("platform_owner"));
+
+    // AdminAccess admits user JWTs with platform_owner/app_admin role
+    // AND per-service tokens (which are gated separately by [RequireScope] on each
+    // admin endpoint). Without the service_token allowance here, narrow-scoped
+    // service tokens would 403 at the policy check before reaching the scope handler.
     options.AddPolicy("AdminAccess", policy =>
         policy.AddAuthenticationSchemes("ServiceToken", JwtBearerDefaults.AuthenticationScheme)
-              .RequireRole("platform_owner", "app_admin"));
+              .RequireRole("platform_owner", "app_admin", "service_token"));
 });
 
 // Per-service token scope-based authorization. RequireScope("...") attributes
