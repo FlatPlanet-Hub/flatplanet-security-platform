@@ -34,6 +34,8 @@ public class ServiceTokenService : IServiceTokenService
     {
         var serviceName = request.ServiceName.Trim().ToLowerInvariant();
 
+        ValidateScopes(request.Scopes);
+
         var existing = await _repo.GetByServiceNameAsync(serviceName);
         if (existing is not null)
             throw new InvalidOperationException($"A service token already exists for '{serviceName}'. Revoke it first.");
@@ -93,9 +95,10 @@ public class ServiceTokenService : IServiceTokenService
 
     public async Task UpdateScopesAsync(Guid id, string[] scopes, Guid actingUserId)
     {
+        ValidateScopes(scopes);
+
         var existing = await _repo.GetByIdAsync(id)
             ?? throw new KeyNotFoundException($"Service token {id} not found.");
-
         var newScopes = scopes ?? [];
         await _repo.UpdateScopesAsync(id, newScopes);
         // Drop cache so the new scope set takes effect on the next request.
@@ -145,6 +148,26 @@ public class ServiceTokenService : IServiceTokenService
         _cache.Remove(CacheKeyHash(existing.TokenHash));
     }
 
+    public async Task<IReadOnlyList<UnknownScopeAuditEntry>> AuditUnknownScopesAsync()
+    {
+        var all = await _repo.GetAllAsync();
+        return all
+            .Select(t => new
+            {
+                t.Id,
+                t.ServiceName,
+                Unknown = t.Scopes.Where(s => !ServiceTokenScopes.IsKnown(s)).ToArray(),
+            })
+            .Where(x => x.Unknown.Length > 0)
+            .Select(x => new UnknownScopeAuditEntry
+            {
+                Id = x.Id,
+                ServiceName = x.ServiceName,
+                UnknownScopes = x.Unknown,
+            })
+            .ToList();
+    }
+
     public async Task<ServiceToken?> ValidateAsync(string plaintextToken)
     {
         if (string.IsNullOrWhiteSpace(plaintextToken))
@@ -180,6 +203,16 @@ public class ServiceTokenService : IServiceTokenService
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    private static void ValidateScopes(string[]? scopes)
+    {
+        if (scopes is null) return;
+        var unknown = scopes.Where(s => !ServiceTokenScopes.IsKnown(s)).ToArray();
+        if (unknown.Length > 0)
+            throw new ArgumentException(
+                $"Unknown scope(s): {string.Join(", ", unknown)}. See ServiceTokenScopes for the canonical list.",
+                nameof(scopes));
+    }
 
     private static string Sha256Hex(string input)
     {

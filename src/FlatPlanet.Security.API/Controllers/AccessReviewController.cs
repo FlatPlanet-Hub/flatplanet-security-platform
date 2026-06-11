@@ -1,3 +1,4 @@
+using FlatPlanet.Security.API.Authorization;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,6 +15,7 @@ public class AccessReviewController : ApiController
     public AccessReviewController(IAccessReviewService accessReview) => _accessReview = accessReview;
 
     [HttpGet]
+    [RequireScope("audit:read")]
     public async Task<IActionResult> GetAccessReview(
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 20,

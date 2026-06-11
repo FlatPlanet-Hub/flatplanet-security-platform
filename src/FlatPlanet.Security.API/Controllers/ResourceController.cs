@@ -1,3 +1,4 @@
+using FlatPlanet.Security.API.Authorization;
 using FlatPlanet.Security.Application.DTOs.Admin;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using Microsoft.AspNetCore.Authorization;
@@ -15,6 +16,7 @@ public class ResourceController : ApiController
     public ResourceController(IResourceService resources) => _resources = resources;
 
     [HttpGet]
+    [RequireScope("resources:read")]
     public async Task<IActionResult> GetAll(Guid appId)
     {
         var result = await _resources.GetByAppIdAsync(appId);
@@ -22,6 +24,7 @@ public class ResourceController : ApiController
     }
 
     [HttpPost]
+    [RequireScope("resources:write")]
     public async Task<IActionResult> Create(Guid appId, [FromBody] CreateResourceRequest request)
     {
         var result = await _resources.CreateAsync(appId, request);
@@ -29,6 +32,7 @@ public class ResourceController : ApiController
     }
 
     [HttpPut("{id:guid}")]
+    [RequireScope("resources:write")]
     public async Task<IActionResult> Update(Guid appId, Guid id, [FromBody] UpdateResourceRequest request)
     {
         var result = await _resources.UpdateAsync(appId, id, request);

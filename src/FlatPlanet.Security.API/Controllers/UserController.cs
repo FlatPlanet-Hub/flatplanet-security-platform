@@ -1,3 +1,4 @@
+using FlatPlanet.Security.API.Authorization;
 using FlatPlanet.Security.Application.DTOs.Admin;
 using FlatPlanet.Security.Application.DTOs.Users;
 using FlatPlanet.Security.Application.Interfaces.Services;
@@ -11,6 +12,8 @@ namespace FlatPlanet.Security.API.Controllers;
 [Route("api/v1/users")]
 // Both schemes accepted: ServiceToken (HubApi calling SP) and JwtBearer (user logged in via hub).
 // Mutating endpoints additionally require the AdminAccess policy below.
+// Service-token callers are additionally gated by [RequireScope] per action;
+// user JWTs bypass scope checks (the role policy handles them).
 [Authorize(AuthenticationSchemes = "ServiceToken," + JwtBearerDefaults.AuthenticationScheme)]
 public class UserController : ApiController
 {
@@ -21,6 +24,7 @@ public class UserController : ApiController
     // Admin only — creating users is a sensitive operation
     [HttpPost]
     [Authorize(Policy = "AdminAccess")]
+    [RequireScope("users:write")]
     public async Task<IActionResult> Create([FromBody] CreateUserRequest request)
     {
         var result = await _users.CreateAsync(request);
@@ -32,6 +36,7 @@ public class UserController : ApiController
     // Also called by HubApi via ServiceToken for member-management flows.
     // Response contains no secrets (no password hash, no tokens) — just profile fields.
     [HttpGet]
+    [RequireScope("users:read")]
     public async Task<IActionResult> GetAll([FromQuery] UserQueryParams query)
     {
         var result = await _users.GetPagedAsync(query);
@@ -41,6 +46,7 @@ public class UserController : ApiController
     // Any authenticated user — needed when the hub renders a member's display info,
     // and by HubApi (via ServiceToken) when looking up user profile for project members.
     [HttpGet("{id:guid}")]
+    [RequireScope("users:read")]
     public async Task<IActionResult> GetById(Guid id)
     {
         var result = await _users.GetByIdAsync(id);
@@ -51,6 +57,7 @@ public class UserController : ApiController
     // (Users update their OWN profile via PATCH /api/v1/auth/me, not this endpoint.)
     [HttpPut("{id:guid}")]
     [Authorize(Policy = "AdminAccess")]
+    [RequireScope("users:write")]
     public async Task<IActionResult> Update(Guid id, [FromBody] UpdateUserRequest request)
     {
         var result = await _users.UpdateAsync(id, request);
@@ -60,6 +67,7 @@ public class UserController : ApiController
     // Admin only — activating/deactivating users is a sensitive operation.
     [HttpPut("{id:guid}/status")]
     [Authorize(Policy = "AdminAccess")]
+    [RequireScope("users:write")]
     public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] UpdateUserStatusRequest request)
     {
         await _users.UpdateStatusAsync(id, request.Status);
