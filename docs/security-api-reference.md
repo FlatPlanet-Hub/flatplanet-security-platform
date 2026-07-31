@@ -309,6 +309,82 @@ The decoded access token payload includes:
 
 ---
 
+### POST /api/v1/auth/federated-login
+
+Verifies an OpenID Connect `id_token` issued by an external identity provider (currently Microsoft / Azure AD), then issues SP tokens for a matching SP user. MFA is skipped — the external provider is presumed to have already enforced it. Enforces per-IP rate limits and company/user status gating.
+
+**Auth required**: No
+
+#### Request
+
+```json
+{
+  "provider": "microsoft",
+  "idToken": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsIng1dCI6...",
+  "appSlug": "finvoice"
+}
+```
+
+#### Fields
+
+| Field | Type | Required | Notes |
+|---|---|---|---|
+| `provider` | string | Yes | Identity provider. Currently only `"microsoft"` is accepted (case-insensitive). |
+| `idToken` | string | Yes | The `id_token` returned by the provider after successful sign-in (e.g. from MSAL `loginRedirect`). Validated against provider JWKS. |
+| `appSlug` | string | Yes | SP app slug the user is logging into (e.g. `"finvoice"`). Used for grant enforcement. |
+
+#### Success Response — 200
+
+Same shape as `POST /api/v1/auth/login` on standard success — SP access token, refresh token, and user info. `requiresMfa` is always `false` and `mfaEnrolmentPending` is not returned (MFA is skipped on this path — Azure is expected to have enforced it).
+
+```json
+{
+  "success": true,
+  "data": {
+    "requiresMfa": false,
+    "challengeId": null,
+    "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "v2.local.abc123...",
+    "expiresIn": 3600,
+    "idleTimeoutMinutes": 30,
+    "user": {
+      "userId": "3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+      "email": "alice@acme.com",
+      "fullName": "Alice Chen",
+      "companyId": "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+    }
+  }
+}
+```
+
+See `POST /api/v1/auth/login` above for full field descriptions and JWT claim structure — they are identical.
+
+#### Error Responses
+
+| HTTP | Message | Cause |
+|---|---|---|
+| `400` | Provider is required. | Missing `provider` field. |
+| `400` | Unsupported provider. | `provider` is not `"microsoft"` (case-insensitive). |
+| `400` | Identity token is required. | Missing `idToken` field. |
+| `400` | App slug is required. | Missing `appSlug` field. |
+| `401` | Invalid or expired identity token. | JWKS validation failed — bad signature, expired token, wrong issuer/audience. |
+| `401` | Identity token is missing an email claim. | Token validated but has no `email` or `preferred_username` claim. |
+| `401` | No SP account found for this identity. Contact your administrator. | Token email does not match any active SP user. |
+| `401` | Application '{appSlug}' not found. | The `appSlug` is not registered in SP. |
+| `403` | User account is {status}. | User status is not `active`. |
+| `403` | Company account is {status}. | Company status is not `active`. |
+| `403` | You are not authorised to access '{appName}'. Contact your administrator. | User exists but has no active grant on the target app. |
+| `429` | Too many requests. | Exceeded federated-login rate limit (per-IP). |
+
+#### Notes
+
+- On success, `federated_login` and `session_start` audit events are recorded with `details` containing `provider` and `app_slug`.
+- On failure, a shared `login_failure` audit event is recorded with `details.reason` set to one of: `user_not_found`, `user_suspended`, `company_suspended`, `app_not_found`, `no_app_grant`. (Failed token validation is logged as a warning only — no audit row, since no user is identifiable.)
+- No password is checked or stored on this path. The user's SP password (if any) is untouched.
+- Session/refresh-token behavior is identical to `/auth/login` — max-concurrent-sessions eviction, refresh-token rotation, and idle/absolute timeouts all apply.
+
+---
+
 ### POST /api/v1/auth/logout
 
 Ends the current session and revokes all refresh tokens for the user.
@@ -2754,7 +2830,8 @@ GET /api/v1/access-review?companyId=7c9e6679-7425-40de-944b-e07fc1f90ae7&page=1&
 | Event | When it fires |
 |---|---|
 | `login_success` | Successful login |
-| `login_failure` | Failed credential check |
+| `login_failure` | Failed credential check (also emitted for federated-login failures — see `details.reason`) |
+| `federated_login` | Successful login via `/api/v1/auth/federated-login` (external IdP path) |
 | `logout` | Explicit logout |
 | `token_refresh` | Refresh token rotated |
 | `token_revoke` | Token manually revoked |

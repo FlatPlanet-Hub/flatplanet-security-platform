@@ -41,6 +41,9 @@ public static class AuditEventType
     public const string ProfileNameUpdated = "profile_name_updated";
     public const string ProfileEmailUpdated = "profile_email_updated";
 
+    // ── Federated login ────────────────────────────────────────────────────
+    public const string FederatedLogin = "federated_login";
+
     // ── Service tokens (per-service auth) ──────────────────────────────────
     public const string ServiceTokenMinted        = "service_token_minted";
     public const string ServiceTokenRevoked       = "service_token_revoked";
