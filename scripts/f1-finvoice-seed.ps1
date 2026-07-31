@@ -88,8 +88,13 @@ function Write-Info { param ([string] $Msg) Write-Host "  [INFO] $Msg" }
 
 Write-Step 'Step 1 — Register Finvoice app'
 
-$appsResp = Invoke-Sp -Method GET -Path '/api/v1/apps'
-$finvoiceApp = $appsResp.data | Where-Object { $_.slug -eq 'finvoice' } | Select-Object -First 1
+# pageSize=500 defends against SP's default page size hiding an existing 'finvoice' app.
+# CompanyId filter (client-side) ensures we don't pick another tenant's 'finvoice' slug
+# if the slug is not globally unique in SP.
+$appsResp = Invoke-Sp -Method GET -Path '/api/v1/apps?pageSize=500'
+$finvoiceApp = $appsResp.data |
+    Where-Object { $_.slug -eq 'finvoice' -and $_.companyId -eq $CompanyId } |
+    Select-Object -First 1
 
 if ($finvoiceApp) {
     Write-Skip "App 'finvoice' already exists — id=$($finvoiceApp.id)"
@@ -162,7 +167,9 @@ $fvUsers = Invoke-FvQuery `
 Write-Info "Found $(@($fvUsers).Count) active Finvoice users"
 
 if (-not $DryRun) {
-    $grantsResp = Invoke-Sp -Method GET -Path "/api/v1/apps/$appId/users"
+    # pageSize=500 defends against SP's default page size hiding existing grants,
+    # which would silently create duplicates on the retry path.
+    $grantsResp = Invoke-Sp -Method GET -Path "/api/v1/apps/$appId/users?pageSize=500"
     $existingGrants = $grantsResp.data   # list of UserAccessResponse
 }
 
