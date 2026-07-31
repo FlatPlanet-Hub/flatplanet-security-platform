@@ -1,20 +1,27 @@
 <#
 .SYNOPSIS
-    F1 — Mirror Finvoice users into the Security Platform.
+    F1 — Mirror Finvoice users into the Security Platform (V27 role model).
 
 .DESCRIPTION
     Idempotent. Safe to re-run. Does NOT migrate passwords — users set their own
     via the SP forgot-password flow (or log in directly via Microsoft/federated path).
-    Re-runs do NOT update existing grants — if a user's SP grant has the wrong role,
-    fix it manually via PUT /api/v1/apps/{appId}/users/{userId}/role.
 
-    Step 1 — Register the Finvoice app in SP (skip if slug 'finvoice' already exists).
-    Step 2 — Seed 5 roles: admin, editor, reviewer, approver, viewer (skip existing).
-    Step 3 — Query active Finvoice users from Platform API, create SP users (skip existing),
-             grant finvoice app access with the matching role.
+    SP grants for Finvoice are LOGIN ONLY. Finvoice handles its own authorization via
+    local ROLE_PERMISSIONS. The script therefore grants exactly one role: 'user'
+    (V27 base tier). Existing grants (any role) are preserved untouched.
+
+    This script does NOT create roles. The finvoice app must already be registered
+    in SP with the V27 role triad (owner / developer / user). Halts if the 'user'
+    role is missing.
+
+    Step 1 — Look up the Finvoice app in SP (halt if not registered).
+    Step 2 — Look up the V27 'user' role id (halt if not found).
+    Step 3 — Query active Finvoice users from Platform API, create SP users
+             (skip existing), and grant the 'user' role to anyone without an
+             existing grant on finvoice.
 
 .PARAMETER SpAdminToken
-    SP admin JWT (platform_owner role, all admin scopes: apps:write roles:write users:write grants:write).
+    SP admin JWT (platform_owner role, all admin scopes: apps:read users:write grants:write).
 
 .PARAMETER FinvoiceToken
     Platform API token for the Finvoice project (project ID: aa09bfd5-9e16-4597-a3cf-e4a9ce13f046).
@@ -48,6 +55,7 @@ $SP_BASE     = 'https://flatplanet-security-api-d5cgdyhmgxcebyak.southeastasia-0
 $PLATFORM    = 'https://flatplanet-api-freffxekdvb6hybs.southeastasia-01.azurewebsites.net'
 $FV_PROJECT  = 'aa09bfd5-9e16-4597-a3cf-e4a9ce13f046'
 $FV_SCHEMA   = 'project_d20e8e40'
+$TARGET_ROLE = 'user'   # V27 base tier — SP grant is login-only
 
 $spHeaders = @{
     Authorization  = "Bearer $SpAdminToken"
@@ -84,9 +92,9 @@ function Write-Skip { param ([string] $Msg) Write-Host "  [SKIP] $Msg" -Foregrou
 function Write-Dry  { param ([string] $Msg) Write-Host "  [DRY]  $Msg" -ForegroundColor Magenta }
 function Write-Info { param ([string] $Msg) Write-Host "  [INFO] $Msg" }
 
-# ── Step 1 — Register Finvoice app ─────────────────────────────────────────────
+# ── Step 1 — Look up Finvoice app ──────────────────────────────────────────────
 
-Write-Step 'Step 1 — Register Finvoice app'
+Write-Step 'Step 1 — Look up Finvoice app'
 
 # pageSize=500 defends against SP's default page size hiding an existing 'finvoice' app.
 # CompanyId filter (client-side) ensures we don't pick another tenant's 'finvoice' slug
@@ -96,65 +104,29 @@ $finvoiceApp = $appsResp.data |
     Where-Object { $_.slug -eq 'finvoice' -and $_.companyId -eq $CompanyId } |
     Select-Object -First 1
 
-if ($finvoiceApp) {
-    Write-Skip "App 'finvoice' already exists — id=$($finvoiceApp.id)"
-    $appId = $finvoiceApp.id
-} else {
-    if ($DryRun) {
-        Write-Dry "Would create app: slug=finvoice, name=Finvoice, companyId=$CompanyId"
-        $appId = '00000000-0000-0000-0000-000000000000'
-    } else {
-        $createdApp = Invoke-Sp -Method POST -Path '/api/v1/apps' -Body @{
-            companyId = $CompanyId
-            name      = 'Finvoice'
-            slug      = 'finvoice'
-            baseUrl   = 'https://fp-finvoice.netlify.app'
-        }
-        $appId = $createdApp.data.id
-        Write-Ok "Created app 'finvoice' — id=$appId"
-    }
+if (-not $finvoiceApp) {
+    throw "Finvoice app not found in SP for companyId=$CompanyId. Register it first (with the V27 role triad) before running this script."
 }
 
-# ── Step 2 — Seed roles ─────────────────────────────────────────────────────────
+$appId = $finvoiceApp.id
+Write-Ok "Found app 'finvoice' — id=$appId"
 
-Write-Step 'Step 2 — Seed roles'
+# ── Step 2 — Look up the V27 'user' role ───────────────────────────────────────
 
-$roleDescriptions = @{
-    admin    = 'Full edit access to all Finvoice sections'
-    editor   = 'Edit access to invoices and timesheets; view-only on other sections'
-    reviewer = 'View-only access to invoices, timesheets, salary increases, and calculators'
-    approver = 'Edit access to invoices; view-only on analytics and timesheets'
-    viewer   = 'View-only access to dashboard, analytics, and knowledge base'
+Write-Step "Step 2 — Look up '$TARGET_ROLE' role"
+
+$rolesResp = Invoke-Sp -Method GET -Path "/api/v1/apps/$appId/roles?pageSize=50"
+$targetRole = $rolesResp.data |
+    Where-Object { $_.name -and ($_.name.ToString().ToLower() -eq $TARGET_ROLE) } |
+    Select-Object -First 1
+
+if (-not $targetRole) {
+    $availableNames = ($rolesResp.data | ForEach-Object { $_.name }) -join ', '
+    throw "Role '$TARGET_ROLE' not found on finvoice app (available: [$availableNames]). App must be registered with V27 roles before running this script."
 }
 
-$roleMap = @{}   # roleName -> SP role id
-
-if (-not $DryRun) {
-    $rolesResp = Invoke-Sp -Method GET -Path "/api/v1/apps/$appId/roles"
-    $existingRoles = $rolesResp.data
-} else {
-    $existingRoles = @()
-}
-
-foreach ($roleName in $roleDescriptions.Keys) {
-    $existing = $existingRoles | Where-Object { $_.name -eq $roleName } | Select-Object -First 1
-    if ($existing) {
-        $roleMap[$roleName] = $existing.id
-        Write-Skip "Role '$roleName' already exists — id=$($existing.id)"
-    } else {
-        if ($DryRun) {
-            Write-Dry "Would create role: name=$roleName"
-            $roleMap[$roleName] = '00000000-0000-0000-0000-000000000000'
-        } else {
-            $created = Invoke-Sp -Method POST -Path "/api/v1/apps/$appId/roles" -Body @{
-                name        = $roleName
-                description = $roleDescriptions[$roleName]
-            }
-            $roleMap[$roleName] = $created.data.id
-            Write-Ok "Created role '$roleName' — id=$($roleMap[$roleName])"
-        }
-    }
-}
+$targetRoleId = $targetRole.id
+Write-Ok "Found role '$TARGET_ROLE' — id=$targetRoleId"
 
 # ── Step 3 — Migrate active Finvoice users ──────────────────────────────────────
 
@@ -183,16 +155,8 @@ foreach ($fvUser in @($fvUsers)) {
     $email    = $fvUser.email.Trim().ToLower()
     # Guard property access defensively for StrictMode safety even though the SELECT is explicit.
     $rawName  = if ($fvUser.PSObject.Properties['name']) { $fvUser.name } else { $null }
-    $rawRole  = if ($fvUser.PSObject.Properties['role']) { $fvUser.role } else { $null }
     $fullName = ($rawName ?? '').Trim()
-    $roleName = ($rawRole ?? '').Trim().ToLower()
     if ([string]::IsNullOrWhiteSpace($fullName)) { $fullName = $email }
-
-    # Map unknown roles to viewer for safety
-    if (-not $roleMap.ContainsKey($roleName)) {
-        Write-Host "  [WARN] Unknown role '$roleName' for $email — mapping to viewer" -ForegroundColor Yellow
-        $roleName = 'viewer'
-    }
 
     try {
         # ── Find or create SP user ──────────────────────────────────────────────
@@ -230,27 +194,20 @@ foreach ($fvUser in @($fvUsers)) {
             $alreadyGranted = $existingGrants | Where-Object { $_.userId -eq $spUserId } | Select-Object -First 1
             if ($alreadyGranted) {
                 $grantSkipped++
-                # Detect role mismatch — surface it so silent skips don't hide a wrong role assignment.
-                $expectedRoleId = $roleMap[$roleName]
                 $existingRoleId = if ($alreadyGranted.PSObject.Properties['roleId']) { $alreadyGranted.roleId } else { $null }
-                if ($existingRoleId -and $expectedRoleId -and ($existingRoleId -ne $expectedRoleId)) {
-                    $existingRoleName = ($roleMap.GetEnumerator() | Where-Object { $_.Value -eq $existingRoleId } | Select-Object -First 1).Key
-                    if (-not $existingRoleName) { $existingRoleName = $existingRoleId }
-                    Write-Warning "Grant exists for $email but role is $existingRoleName, expected $roleName — fix manually via PUT /api/v1/apps/$appId/users/$spUserId/role"
-                } else {
-                    Write-Skip "Grant already exists for $email ($roleName)"
-                }
+                # No mismatch warning: existing grants are intentionally preserved (SP is login-only for Finvoice).
+                Write-Skip "$email already has grant (roleId=$existingRoleId) — preserving existing role"
             } else {
                 Invoke-Sp -Method POST -Path "/api/v1/apps/$appId/users" -Body @{
                     userId = $spUserId
-                    roleId = $roleMap[$roleName]
+                    roleId = $targetRoleId
                 } | Out-Null
-                $existingGrants += [pscustomobject]@{ userId = $spUserId; roleId = $roleMap[$roleName] }
+                $existingGrants += [pscustomobject]@{ userId = $spUserId; roleId = $targetRoleId }
                 $granted++
-                Write-Ok "Granted $roleName to $email"
+                Write-Ok "Granted '$TARGET_ROLE' to $email"
             }
         } else {
-            Write-Dry "Would grant role '$roleName' to $email"
+            Write-Dry "Would grant role '$TARGET_ROLE' to $email (if no existing grant)"
         }
     } catch {
         $errors += "ERROR processing ${email}: $_"
@@ -267,7 +224,7 @@ if ($DryRun) {
     Write-Info "Users created : $created"
     Write-Info "Users skipped : $skipped (already in SP)"
     Write-Info "Grants created: $granted"
-    Write-Info "Grants skipped: $grantSkipped (already granted)"
+    Write-Info "Grants skipped: $grantSkipped (already granted — role preserved)"
     if ($errors.Count -gt 0) {
         Write-Host "`n  ERRORS ($($errors.Count)):" -ForegroundColor Red
         $errors | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
