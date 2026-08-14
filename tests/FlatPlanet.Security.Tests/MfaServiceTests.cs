@@ -7,6 +7,7 @@ using FlatPlanet.Security.Application.Services;
 using FlatPlanet.Security.Domain.Entities;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace FlatPlanet.Security.Tests;
@@ -29,6 +30,7 @@ public class MfaServiceTests
     private readonly Mock<ITotpSecretEncryptor> _encryptor = new();
     private readonly Mock<ITotpVerifier> _totpVerifier = new();
     private readonly Mock<IMfaBackupCodeRepository> _backupCodes = new();
+    private readonly Mock<IAppRepository> _apps = new();
     private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
     private readonly Mock<ILogger<MfaService>> _logger = new();
 
@@ -37,7 +39,9 @@ public class MfaServiceTests
         _configService.Object, _jwt.Object, _auditLog.Object,
         _sessions.Object, _refreshTokens.Object, _roles.Object,
         _db.Object, _identityVerification.Object, _encryptor.Object,
-        _totpVerifier.Object, _backupCodes.Object, _cache, _logger.Object);
+        _totpVerifier.Object, _backupCodes.Object,
+        new SessionPolicyResolver(_apps.Object, NullLogger<SessionPolicyResolver>.Instance),
+        _cache, _logger.Object);
 
     private void SetupTransaction()
     {

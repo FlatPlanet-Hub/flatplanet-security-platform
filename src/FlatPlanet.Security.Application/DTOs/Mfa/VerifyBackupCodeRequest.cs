@@ -10,4 +10,8 @@ public class VerifyBackupCodeRequest
     [Required]
     [StringLength(10, MinimumLength = 10)]
     public string BackupCode { get; set; } = string.Empty;
+
+    /// <summary>Optional SP app slug this session belongs to. Selects per-app session timeouts.</summary>
+    [MaxLength(100)]
+    public string? AppSlug { get; set; }
 }

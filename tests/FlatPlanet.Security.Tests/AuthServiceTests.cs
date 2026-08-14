@@ -8,6 +8,7 @@ using FlatPlanet.Security.Application.Services;
 using FlatPlanet.Security.Domain.Entities;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 
 namespace FlatPlanet.Security.Tests;
@@ -28,6 +29,7 @@ public class LoginServiceTests
     private readonly Mock<IDbTransaction> _tx = new();
     private readonly Mock<ICompanyRepository> _companies = new();
     private readonly Mock<IMfaService> _mfa = new();
+    private readonly Mock<IAppRepository> _apps = new();
     private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
     private readonly Mock<ILogger<LoginService>> _logger = new();
 
@@ -36,6 +38,7 @@ public class LoginServiceTests
         _sessions.Object, _refreshTokens.Object,
         _loginAttempts.Object, _auditLog.Object, _configService.Object,
         _roles.Object, _db.Object, _companies.Object, _mfa.Object,
+        new SessionPolicyResolver(_apps.Object, NullLogger<SessionPolicyResolver>.Instance),
         _cache, _logger.Object);
 
     private void SetupDefaultConfig()
@@ -317,5 +320,108 @@ public class LoginServiceTests
         // Act & Assert
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             service.RefreshAsync(new RefreshRequest { RefreshToken = "revoked-token" }, null));
+    }
+
+    // ── Per-app session policy ───────────────────────────────────────────────
+
+    /// <summary>
+    /// Sets up a successful password login and captures the Session handed to the repository.
+    /// </summary>
+    private (Guid userId, List<Session> created) ArrangeSuccessfulLogin()
+    {
+        SetupDefaultConfig();
+        SetupTransaction();
+        var userId    = Guid.NewGuid();
+        var companyId = Guid.NewGuid();
+        var created   = new List<Session>();
+
+        _loginAttempts.Setup(l => l.GetLoginChecksAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(new LoginCheckCounts(0, 0, 0));
+        _loginAttempts.Setup(l => l.RecordAsync(It.IsAny<LoginAttempt>())).Returns(Task.CompletedTask);
+        _users.Setup(u => u.GetByEmailAsync("user@test.com")).ReturnsAsync(new User
+        {
+            Id = userId, CompanyId = companyId, Email = "user@test.com",
+            FullName = "Test User", Status = "active", PasswordHash = "hashed"
+        });
+        _passwordHasher.Setup(p => p.Verify("pass123", "hashed")).Returns(true);
+        _companies.Setup(c => c.GetByIdAsync(companyId))
+            .ReturnsAsync(new Company { Id = companyId, Name = "Test Co", Status = "active" });
+        _sessions.Setup(s => s.EvictOldestIfOverLimitAsync(userId, It.IsAny<int>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>())).Returns(Task.CompletedTask);
+        _sessions.Setup(s => s.CreateAsync(It.IsAny<Session>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
+            .ReturnsAsync((Session s, IDbConnection _, IDbTransaction _) => { s.Id = Guid.NewGuid(); created.Add(s); return s; });
+        _jwt.Setup(j => j.IssueAccessTokenAsync(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).ReturnsAsync("access.token");
+        _jwt.Setup(j => j.GenerateRefreshToken()).Returns(("plain-token", "hashed-token"));
+        _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
+            .ReturnsAsync((RefreshToken t, IDbConnection _, IDbTransaction _) => t);
+        _roles.Setup(r => r.GetPlatformRoleNamesForUserAsync(userId)).ReturnsAsync(new List<string>());
+        _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
+        _users.Setup(u => u.UpdateLastSeenAtAsync(userId, It.IsAny<DateTime>())).Returns(Task.CompletedTask);
+
+        return (userId, created);
+    }
+
+    [Fact]
+    public async Task Login_ShouldStampAppIdAndAppTimeouts_WhenAppHasOverrides()
+    {
+        var (_, created) = ArrangeSuccessfulLogin();
+        var appId = Guid.NewGuid();
+        _apps.Setup(a => a.GetBySlugAsync("tala-v2-dashboard")).ReturnsAsync(new App
+        {
+            Id   = appId,
+            Slug = "tala-v2-dashboard",
+            SessionAbsoluteTimeoutMinutes = 525600,
+            SessionIdleTimeoutMinutes     = 525600
+        });
+
+        var before = DateTime.UtcNow;
+        var result = await CreateService().LoginAsync(
+            new LoginRequest { Email = "user@test.com", Password = "pass123", AppSlug = "tala-v2-dashboard" },
+            "1.2.3.4", "TV");
+
+        var session = Assert.Single(created);
+        Assert.Equal(appId, session.AppId);
+        Assert.Equal(525600, session.IdleTimeoutMinutes);
+        Assert.True(session.ExpiresAt >= before.AddMinutes(525600).AddMinutes(-1),
+            "absolute timeout should come from the app override, not the 480-minute platform default");
+        Assert.Equal(525600, result.IdleTimeoutMinutes);
+    }
+
+    [Fact]
+    public async Task Login_ShouldUsePlatformTimeouts_WhenAppHasNoOverrides()
+    {
+        var (_, created) = ArrangeSuccessfulLogin();
+        var appId = Guid.NewGuid();
+        _apps.Setup(a => a.GetBySlugAsync("finvoice")).ReturnsAsync(new App
+        {
+            Id = appId, Slug = "finvoice",
+            SessionAbsoluteTimeoutMinutes = null, SessionIdleTimeoutMinutes = null
+        });
+
+        var before = DateTime.UtcNow;
+        await CreateService().LoginAsync(
+            new LoginRequest { Email = "user@test.com", Password = "pass123", AppSlug = "finvoice" },
+            null, null);
+
+        var session = Assert.Single(created);
+        Assert.Equal(appId, session.AppId);
+        Assert.Equal(30, session.IdleTimeoutMinutes);
+        Assert.True(session.ExpiresAt <= before.AddMinutes(480).AddMinutes(1),
+            "an app without overrides must keep the platform 8-hour cap");
+    }
+
+    [Fact]
+    public async Task Login_ShouldLeaveAppIdNull_WhenNoAppSlugSent()
+    {
+        var (_, created) = ArrangeSuccessfulLogin();
+
+        var before = DateTime.UtcNow;
+        await CreateService().LoginAsync(
+            new LoginRequest { Email = "user@test.com", Password = "pass123" }, null, null);
+
+        var session = Assert.Single(created);
+        Assert.Null(session.AppId);
+        Assert.Equal(30, session.IdleTimeoutMinutes);
+        Assert.True(session.ExpiresAt <= before.AddMinutes(480).AddMinutes(1));
+        _apps.Verify(a => a.GetBySlugAsync(It.IsAny<string>()), Times.Never);
     }
 }

@@ -42,7 +42,7 @@ public class MfaController : ApiController
     {
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
         var userAgent = Request.Headers.UserAgent.ToString();
-        var result = await _mfa.VerifyTotpEnrolmentAsync(GetUserId(), request.TotpCode, ipAddress, userAgent);
+        var result = await _mfa.VerifyTotpEnrolmentAsync(GetUserId(), request.TotpCode, ipAddress, userAgent, request.AppSlug);
         return OkData(result);
     }
 
@@ -55,7 +55,7 @@ public class MfaController : ApiController
     {
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
         var userAgent = Request.Headers.UserAgent.ToString();
-        var result = await _mfa.VerifyLoginTotpAsync(request.UserId, request.TotpCode, ipAddress, userAgent);
+        var result = await _mfa.VerifyLoginTotpAsync(request.UserId, request.TotpCode, ipAddress, userAgent, request.AppSlug);
         return OkData(result);
     }
 
@@ -104,7 +104,7 @@ public class MfaController : ApiController
     {
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
         var userAgent = Request.Headers.UserAgent.ToString();
-        var result = await _mfa.VerifyLoginEmailOtpAsync(request.ChallengeId, request.OtpCode, ipAddress, userAgent);
+        var result = await _mfa.VerifyLoginEmailOtpAsync(request.ChallengeId, request.OtpCode, ipAddress, userAgent, request.AppSlug);
         return OkData(result);
     }
 
@@ -125,7 +125,7 @@ public class MfaController : ApiController
     {
         var ipAddress = HttpContext.Connection.RemoteIpAddress?.ToString();
         var userAgent = Request.Headers.UserAgent.ToString();
-        var result = await _mfa.VerifyBackupCodeAsync(request.UserId, request.BackupCode, ipAddress, userAgent);
+        var result = await _mfa.VerifyBackupCodeAsync(request.UserId, request.BackupCode, ipAddress, userAgent, request.AppSlug);
         return OkData(result);
     }
 }

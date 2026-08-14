@@ -254,6 +254,7 @@ builder.Services.AddScoped<IEmailService, SmtpEmailService>();
 builder.Services.AddSingleton<ITotpSecretEncryptor, TotpSecretEncryptor>();
 builder.Services.AddSingleton<ITotpVerifier, TotpVerifier>();
 builder.Services.AddScoped<IMfaService, MfaService>();
+builder.Services.AddScoped<ISessionPolicyResolver, SessionPolicyResolver>();
 builder.Services.AddScoped<IIdentityVerificationService, IdentityVerificationService>();
 builder.Services.AddScoped<IServiceTokenService, ServiceTokenService>();
 builder.Services.AddScoped<IFederatedLoginService, FederatedLoginService>();

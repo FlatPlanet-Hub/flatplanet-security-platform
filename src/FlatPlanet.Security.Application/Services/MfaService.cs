@@ -31,6 +31,7 @@ public class MfaService : IMfaService
     private readonly ITotpSecretEncryptor _encryptor;
     private readonly ITotpVerifier _totpVerifier;
     private readonly IMfaBackupCodeRepository _backupCodes;
+    private readonly ISessionPolicyResolver _sessionPolicy;
     private readonly IMemoryCache _cache;
     private readonly ILogger<MfaService> _logger;
 
@@ -49,6 +50,7 @@ public class MfaService : IMfaService
         ITotpSecretEncryptor encryptor,
         ITotpVerifier totpVerifier,
         IMfaBackupCodeRepository backupCodes,
+        ISessionPolicyResolver sessionPolicy,
         IMemoryCache cache,
         ILogger<MfaService> logger)
     {
@@ -66,6 +68,7 @@ public class MfaService : IMfaService
         _encryptor = encryptor;
         _totpVerifier = totpVerifier;
         _backupCodes = backupCodes;
+        _sessionPolicy = sessionPolicy;
         _cache = cache;
         _logger = logger;
     }
@@ -91,7 +94,7 @@ public class MfaService : IMfaService
         return new BeginTotpEnrolmentResponse { QrCodeUri = qrCodeUri };
     }
 
-    public async Task<LoginResponse> VerifyTotpEnrolmentAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent)
+    public async Task<LoginResponse> VerifyTotpEnrolmentAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent, string? appSlug = null)
     {
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
@@ -119,7 +122,7 @@ public class MfaService : IMfaService
         await _users.CompleteTotpEnrolmentAsync(userId, matchedStep);
         await _identityVerification.SyncStatusAsync(userId, true);
 
-        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
+        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent, appSlug);
 
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
         var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
@@ -141,7 +144,7 @@ public class MfaService : IMfaService
 
     // ── TOTP Login ───────────────────────────────────────────────────────────
 
-    public async Task<LoginResponse> VerifyLoginTotpAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent)
+    public async Task<LoginResponse> VerifyLoginTotpAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent, string? appSlug = null)
     {
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
@@ -175,7 +178,7 @@ public class MfaService : IMfaService
 
         await _users.UpdateMfaTotpLastUsedStepAsync(userId, matchedStep);
 
-        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
+        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent, appSlug);
 
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
         var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
@@ -281,7 +284,7 @@ public class MfaService : IMfaService
         return challenge;
     }
 
-    public async Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent)
+    public async Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent, string? appSlug = null)
     {
         var challenge = await _challenges.GetByIdAsync(challengeId)
             ?? throw new KeyNotFoundException("MFA challenge not found.");
@@ -316,7 +319,7 @@ public class MfaService : IMfaService
 
         await _challenges.MarkVerifiedAsync(challenge.Id);
 
-        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
+        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent, appSlug);
 
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
         var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
@@ -366,7 +369,7 @@ public class MfaService : IMfaService
         return new GenerateBackupCodesResponse { Codes = plainCodes, Count = plainCodes.Count };
     }
 
-    public async Task<LoginResponse> VerifyBackupCodeAsync(Guid userId, string backupCode, string? ipAddress, string? userAgent)
+    public async Task<LoginResponse> VerifyBackupCodeAsync(Guid userId, string backupCode, string? ipAddress, string? userAgent, string? appSlug = null)
     {
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
@@ -388,7 +391,7 @@ public class MfaService : IMfaService
 
         await _backupCodes.MarkUsedAsync(stored.Id);
 
-        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent);
+        var (session, refreshTokenPlain, config) = await CreateSessionInTransactionAsync(user.Id, ipAddress, userAgent, appSlug);
 
         var platformRoles = await _roles.GetPlatformRoleNamesForUserAsync(user.Id);
         var accessToken   = await _jwt.IssueAccessTokenAsync(user, session.Id, platformRoles);
@@ -497,7 +500,7 @@ public class MfaService : IMfaService
     }
 
     private async Task<(Session session, string refreshTokenPlain, Dictionary<string, string> config)> CreateSessionInTransactionAsync(
-        Guid userId, string? ipAddress, string? userAgent)
+        Guid userId, string? ipAddress, string? userAgent, string? appSlug)
     {
         var config = await _configService.GetAllCachedAsync();
         int Cfg(string key, int def) =>
@@ -505,9 +508,13 @@ public class MfaService : IMfaService
 
         var now               = DateTime.UtcNow;
         var maxSessions       = Cfg("max_concurrent_sessions", 3);
-        var absoluteTimeout   = Cfg("session_absolute_timeout_minutes", 480);
-        var idleTimeout       = Cfg("session_idle_timeout_minutes", 30);
         var refreshExpiryDays = Cfg("jwt_refresh_expiry_days", 7);
+
+        // Per-app timeout overrides. appSlug is optional — MFA clients that do not
+        // send it get the platform defaults, as before.
+        var policy            = await _sessionPolicy.ResolveAsync(appSlug, config);
+        var absoluteTimeout   = policy.AbsoluteTimeoutMinutes;
+        var idleTimeout       = policy.IdleTimeoutMinutes;
 
         Session session;
         string refreshTokenPlain;
@@ -522,6 +529,7 @@ public class MfaService : IMfaService
                 session = await _sessions.CreateAsync(new Session
                 {
                     UserId             = userId,
+                    AppId              = policy.AppId,
                     IpAddress          = ipAddress,
                     UserAgent          = userAgent,
                     ExpiresAt          = now.AddMinutes(absoluteTimeout),

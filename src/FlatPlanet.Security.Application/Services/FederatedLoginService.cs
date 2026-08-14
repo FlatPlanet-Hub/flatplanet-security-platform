@@ -26,6 +26,7 @@ public class FederatedLoginService : IFederatedLoginService
     private readonly IAuditLogRepository _auditLog;
     private readonly ISecurityConfigService _configService;
     private readonly IDbConnectionFactory _db;
+    private readonly ISessionPolicyResolver _sessionPolicy;
     private readonly ILogger<FederatedLoginService> _logger;
 
     public FederatedLoginService(
@@ -41,6 +42,7 @@ public class FederatedLoginService : IFederatedLoginService
         IAuditLogRepository auditLog,
         ISecurityConfigService configService,
         IDbConnectionFactory db,
+        ISessionPolicyResolver sessionPolicy,
         ILogger<FederatedLoginService> logger)
     {
         _tokenValidator = tokenValidator;
@@ -55,6 +57,7 @@ public class FederatedLoginService : IFederatedLoginService
         _auditLog       = auditLog;
         _configService  = configService;
         _db             = db;
+        _sessionPolicy  = sessionPolicy;
         _logger         = logger;
     }
 
@@ -167,10 +170,14 @@ public class FederatedLoginService : IFederatedLoginService
             config.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
 
         var maxSessions         = Cfg("max_concurrent_sessions", 3);
-        var absoluteTimeout     = Cfg("session_absolute_timeout_minutes", 480);
-        var idleTimeoutMinutes  = Cfg("session_idle_timeout_minutes", 30);
         var refreshExpiryDays   = Cfg("jwt_refresh_expiry_days", 7);
         var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
+
+        // Per-app timeout overrides. The app is already resolved and validated above,
+        // so this needs no extra lookup.
+        var policy              = _sessionPolicy.Resolve(app, config);
+        var absoluteTimeout     = policy.AbsoluteTimeoutMinutes;
+        var idleTimeoutMinutes  = policy.IdleTimeoutMinutes;
 
         Session session;
         string refreshTokenPlain;
@@ -185,6 +192,7 @@ public class FederatedLoginService : IFederatedLoginService
                 session = await _sessions.CreateAsync(new Session
                 {
                     UserId             = user.Id,
+                    AppId              = policy.AppId,
                     IpAddress          = ipAddress,
                     UserAgent          = userAgent,
                     ExpiresAt          = now.AddMinutes(absoluteTimeout),

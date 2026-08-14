@@ -26,6 +26,7 @@ public class LoginService : ILoginService
     private readonly IDbConnectionFactory _db;
     private readonly ICompanyRepository _companies;
     private readonly IMfaService _mfa;
+    private readonly ISessionPolicyResolver _sessionPolicy;
     private readonly IMemoryCache _cache;
     private readonly ILogger<LoginService> _logger;
 
@@ -42,6 +43,7 @@ public class LoginService : ILoginService
         IDbConnectionFactory db,
         ICompanyRepository companies,
         IMfaService mfa,
+        ISessionPolicyResolver sessionPolicy,
         IMemoryCache cache,
         ILogger<LoginService> logger)
     {
@@ -57,6 +59,7 @@ public class LoginService : ILoginService
         _db             = db;
         _companies      = companies;
         _mfa            = mfa;
+        _sessionPolicy  = sessionPolicy;
         _cache          = cache;
         _logger         = logger;
     }
@@ -185,9 +188,13 @@ public class LoginService : ILoginService
         }
 
         var maxSessions        = Cfg("max_concurrent_sessions", 3);
-        var absoluteTimeout    = Cfg("session_absolute_timeout_minutes", 480);
-        var idleTimeoutMinutes = Cfg("session_idle_timeout_minutes", 30);
         var refreshExpiryDays  = Cfg("jwt_refresh_expiry_days", 7);
+
+        // Per-app timeout overrides (apps.session_*_timeout_minutes) win over the
+        // platform defaults. Both are stamped onto the session row below.
+        var policy             = await _sessionPolicy.ResolveAsync(request.AppSlug, config);
+        var absoluteTimeout    = policy.AbsoluteTimeoutMinutes;
+        var idleTimeoutMinutes = policy.IdleTimeoutMinutes;
 
         Session session;
         string refreshTokenPlain;
@@ -202,6 +209,7 @@ public class LoginService : ILoginService
                 session = await _sessions.CreateAsync(new Session
                 {
                     UserId             = user.Id,
+                    AppId              = policy.AppId,
                     IpAddress          = ipAddress,
                     UserAgent          = userAgent,
                     ExpiresAt          = now.AddMinutes(absoluteTimeout),
