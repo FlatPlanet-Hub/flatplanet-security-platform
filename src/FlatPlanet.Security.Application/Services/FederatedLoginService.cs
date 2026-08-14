@@ -173,9 +173,9 @@ public class FederatedLoginService : IFederatedLoginService
         var refreshExpiryDays   = Cfg("jwt_refresh_expiry_days", 7);
         var accessExpiryMinutes = Cfg("jwt_access_expiry_minutes", 60);
 
-        // Per-app timeout overrides. The app is already resolved and validated above,
-        // so this needs no extra lookup.
-        var policy              = _sessionPolicy.Resolve(app, config);
+        // Per-app timeout overrides. The app was resolved above and the user's active grant
+        // to it verified, so the override needs no re-check and no extra lookup.
+        var policy              = _sessionPolicy.ResolveForAuthorisedApp(app, config);
         var absoluteTimeout     = policy.AbsoluteTimeoutMinutes;
         var idleTimeoutMinutes  = policy.IdleTimeoutMinutes;
 

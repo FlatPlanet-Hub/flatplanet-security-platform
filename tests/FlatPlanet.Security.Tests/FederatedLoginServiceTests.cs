@@ -43,7 +43,7 @@ public class FederatedLoginServiceTests
         _audit.Object,
         _config.Object,
         _db.Object,
-        new SessionPolicyResolver(_apps.Object, NullLogger<SessionPolicyResolver>.Instance),
+        new SessionPolicyResolver(_apps.Object, _grants.Object, NullLogger<SessionPolicyResolver>.Instance),
         NullLogger<FederatedLoginService>.Instance);
 
     private static User ActiveUser() => new()
@@ -349,5 +349,63 @@ public class FederatedLoginServiceTests
 
         Assert.Equal("access-token", result.AccessToken);
         Assert.Equal(user.Email,     result.User.Email);
+    }
+
+    // ── per-app session policy ───────────────────────────────────────────────
+
+    /// <summary>Captures the Session written to the repository instead of returning a fixed one.</summary>
+    private List<Session> CaptureSessions()
+    {
+        var created = new List<Session>();
+        _sessions.Setup(s => s.CreateAsync(It.IsAny<Session>(),
+                     It.IsAny<System.Data.IDbConnection>(), It.IsAny<System.Data.IDbTransaction>()))
+                 .ReturnsAsync((Session s, System.Data.IDbConnection _, System.Data.IDbTransaction _) =>
+                 {
+                     s.Id = Guid.NewGuid();
+                     created.Add(s);
+                     return s;
+                 });
+        return created;
+    }
+
+    [Fact]
+    public async Task FederatedLoginAsync_ShouldStampAppIdAndApplyOverride()
+    {
+        var user = ActiveUser();
+        var app  = FinvoiceApp();
+        app.SessionAbsoluteTimeoutMinutes = 525600;
+        app.SessionIdleTimeoutMinutes     = 525600;
+        SetupHappyPath(user, app);
+        var created = CaptureSessions();
+
+        var before = DateTime.UtcNow;
+        var result = await BuildSut().FederatedLoginAsync(
+            new FederatedLoginRequest { Provider = "microsoft", IdToken = "valid-token", AppSlug = "finvoice" },
+            ipAddress: "1.2.3.4", userAgent: "TV");
+
+        var session = Assert.Single(created);
+        Assert.Equal(app.Id, session.AppId);
+        Assert.Equal(525600, session.IdleTimeoutMinutes);
+        Assert.InRange(session.ExpiresAt, before.AddMinutes(525600), before.AddMinutes(525601));
+        Assert.Equal(525600, result.IdleTimeoutMinutes);
+    }
+
+    [Fact]
+    public async Task FederatedLoginAsync_ShouldUsePlatformDefaults_WhenAppHasNoOverride()
+    {
+        var user = ActiveUser();
+        var app  = FinvoiceApp();   // no overrides
+        SetupHappyPath(user, app);
+        var created = CaptureSessions();
+
+        var before = DateTime.UtcNow;
+        await BuildSut().FederatedLoginAsync(
+            new FederatedLoginRequest { Provider = "microsoft", IdToken = "valid-token", AppSlug = "finvoice" },
+            null, null);
+
+        var session = Assert.Single(created);
+        Assert.Equal(app.Id, session.AppId);
+        Assert.Equal(30, session.IdleTimeoutMinutes);
+        Assert.InRange(session.ExpiresAt, before.AddMinutes(480), before.AddMinutes(481));
     }
 }

@@ -18,12 +18,28 @@ public readonly record struct SessionPolicy(Guid? AppId, int AbsoluteTimeoutMinu
 public interface ISessionPolicyResolver
 {
     /// <summary>
-    /// Resolves by app slug. An unknown or absent slug falls back to the platform
-    /// defaults with a null AppId — it never throws, because login has historically
-    /// accepted any appSlug and rejecting one here would break existing clients.
+    /// Resolves by app slug for a login where the app has NOT yet been authorised.
     /// </summary>
-    Task<SessionPolicy> ResolveAsync(string? appSlug, IReadOnlyDictionary<string, string> config);
+    /// <remarks>
+    /// The slug arrives as unauthenticated client input on anonymous endpoints, so an
+    /// override is applied only when the app is active AND the user holds an active role
+    /// grant to it. Without that check any account could claim another app's session
+    /// lifetime just by sending its slug.
+    ///
+    /// Never throws: an unknown slug, an inactive app, or a missing grant falls back to
+    /// the platform defaults and logs a warning. Login has always accepted an arbitrary
+    /// appSlug (see docs/security-api-reference.md), so rejecting one here would break
+    /// existing clients that send a stale value.
+    /// </remarks>
+    Task<SessionPolicy> ResolveAsync(Guid userId, string? appSlug, IReadOnlyDictionary<string, string> config);
 
-    /// <summary>Resolves from an app the caller has already loaded and validated.</summary>
-    SessionPolicy Resolve(App? app, IReadOnlyDictionary<string, string> config);
+    /// <summary>
+    /// Resolves from an app the caller has ALREADY authorised for this user.
+    /// </summary>
+    /// <remarks>
+    /// Applies the app's override unconditionally — it performs no status or grant check.
+    /// Only call this after verifying both, as FederatedLoginService does before creating
+    /// its session. If you have not verified access, call <see cref="ResolveAsync"/>.
+    /// </remarks>
+    SessionPolicy ResolveForAuthorisedApp(App? app, IReadOnlyDictionary<string, string> config);
 }

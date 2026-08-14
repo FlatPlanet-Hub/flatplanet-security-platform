@@ -5,6 +5,7 @@ using FlatPlanet.Security.Application.Interfaces;
 using FlatPlanet.Security.Application.Interfaces.Repositories;
 using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
+using FlatPlanet.Security.Domain.Constants;
 using FlatPlanet.Security.Domain.Entities;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
@@ -30,6 +31,7 @@ public class LoginServiceTests
     private readonly Mock<ICompanyRepository> _companies = new();
     private readonly Mock<IMfaService> _mfa = new();
     private readonly Mock<IAppRepository> _apps = new();
+    private readonly Mock<IUserAppRoleRepository> _grants = new();
     private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
     private readonly Mock<ILogger<LoginService>> _logger = new();
 
@@ -38,7 +40,7 @@ public class LoginServiceTests
         _sessions.Object, _refreshTokens.Object,
         _loginAttempts.Object, _auditLog.Object, _configService.Object,
         _roles.Object, _db.Object, _companies.Object, _mfa.Object,
-        new SessionPolicyResolver(_apps.Object, NullLogger<SessionPolicyResolver>.Instance),
+        new SessionPolicyResolver(_apps.Object, _grants.Object, NullLogger<SessionPolicyResolver>.Instance),
         _cache, _logger.Object);
 
     private void SetupDefaultConfig()
@@ -360,18 +362,30 @@ public class LoginServiceTests
         return (userId, created);
     }
 
+    /// <summary>Registers an app and, by default, an active grant for the logging-in user.</summary>
+    private Guid ArrangeApp(string slug, Guid userId, int? absolute = null, int? idle = null, bool granted = true)
+    {
+        var appId = Guid.NewGuid();
+        _apps.Setup(a => a.GetBySlugAsync(slug)).ReturnsAsync(new App
+        {
+            Id     = appId,
+            Slug   = slug,
+            Status = EntityStatus.Active,
+            SessionAbsoluteTimeoutMinutes = absolute,
+            SessionIdleTimeoutMinutes     = idle
+        });
+        _grants.Setup(g => g.GetActiveByUserAndAppAsync(userId, appId))
+            .ReturnsAsync(granted
+                ? new[] { new UserAppRole { Id = Guid.NewGuid(), UserId = userId, AppId = appId } }
+                : Array.Empty<UserAppRole>());
+        return appId;
+    }
+
     [Fact]
     public async Task Login_ShouldStampAppIdAndAppTimeouts_WhenAppHasOverrides()
     {
-        var (_, created) = ArrangeSuccessfulLogin();
-        var appId = Guid.NewGuid();
-        _apps.Setup(a => a.GetBySlugAsync("tala-v2-dashboard")).ReturnsAsync(new App
-        {
-            Id   = appId,
-            Slug = "tala-v2-dashboard",
-            SessionAbsoluteTimeoutMinutes = 525600,
-            SessionIdleTimeoutMinutes     = 525600
-        });
+        var (userId, created) = ArrangeSuccessfulLogin();
+        var appId = ArrangeApp("tala-v2-dashboard", userId, absolute: 525600, idle: 525600);
 
         var before = DateTime.UtcNow;
         var result = await CreateService().LoginAsync(
@@ -381,21 +395,35 @@ public class LoginServiceTests
         var session = Assert.Single(created);
         Assert.Equal(appId, session.AppId);
         Assert.Equal(525600, session.IdleTimeoutMinutes);
-        Assert.True(session.ExpiresAt >= before.AddMinutes(525600).AddMinutes(-1),
-            "absolute timeout should come from the app override, not the 480-minute platform default");
+        Assert.InRange(session.ExpiresAt, before.AddMinutes(525600), before.AddMinutes(525601));
         Assert.Equal(525600, result.IdleTimeoutMinutes);
+    }
+
+    [Fact]
+    public async Task Login_ShouldRefuseOverride_WhenUserHasNoGrantToApp()
+    {
+        // appSlug is unauthenticated client input — without the grant gate, any account
+        // could claim the dashboard's 365-day session by sending its slug.
+        var (userId, created) = ArrangeSuccessfulLogin();
+        var appId = ArrangeApp("tala-v2-dashboard", userId, absolute: 525600, idle: 525600, granted: false);
+
+        var before = DateTime.UtcNow;
+        var result = await CreateService().LoginAsync(
+            new LoginRequest { Email = "user@test.com", Password = "pass123", AppSlug = "tala-v2-dashboard" },
+            null, null);
+
+        var session = Assert.Single(created);
+        Assert.Equal(appId, session.AppId);   // claim is recorded
+        Assert.Equal(30, session.IdleTimeoutMinutes);
+        Assert.InRange(session.ExpiresAt, before.AddMinutes(480), before.AddMinutes(481));
+        Assert.Equal(30, result.IdleTimeoutMinutes);
     }
 
     [Fact]
     public async Task Login_ShouldUsePlatformTimeouts_WhenAppHasNoOverrides()
     {
-        var (_, created) = ArrangeSuccessfulLogin();
-        var appId = Guid.NewGuid();
-        _apps.Setup(a => a.GetBySlugAsync("finvoice")).ReturnsAsync(new App
-        {
-            Id = appId, Slug = "finvoice",
-            SessionAbsoluteTimeoutMinutes = null, SessionIdleTimeoutMinutes = null
-        });
+        var (userId, created) = ArrangeSuccessfulLogin();
+        var appId = ArrangeApp("finvoice", userId);
 
         var before = DateTime.UtcNow;
         await CreateService().LoginAsync(
@@ -405,8 +433,7 @@ public class LoginServiceTests
         var session = Assert.Single(created);
         Assert.Equal(appId, session.AppId);
         Assert.Equal(30, session.IdleTimeoutMinutes);
-        Assert.True(session.ExpiresAt <= before.AddMinutes(480).AddMinutes(1),
-            "an app without overrides must keep the platform 8-hour cap");
+        Assert.InRange(session.ExpiresAt, before.AddMinutes(480), before.AddMinutes(481));
     }
 
     [Fact]
@@ -421,7 +448,47 @@ public class LoginServiceTests
         var session = Assert.Single(created);
         Assert.Null(session.AppId);
         Assert.Equal(30, session.IdleTimeoutMinutes);
-        Assert.True(session.ExpiresAt <= before.AddMinutes(480).AddMinutes(1));
+        Assert.InRange(session.ExpiresAt, before.AddMinutes(480), before.AddMinutes(481));
         _apps.Verify(a => a.GetBySlugAsync(It.IsAny<string>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Login_ShouldKeepEnrolmentSessionAtTenMinutes_RegardlessOfAppOverride()
+    {
+        // The MFA enrolment session is deliberately fixed at 10/10 and must never pick up
+        // an app override — it exists only to reach begin-enrol / verify-enrol.
+        SetupDefaultConfig();
+        SetupTransaction();
+        var userId    = Guid.NewGuid();
+        var companyId = Guid.NewGuid();
+        var created   = new List<Session>();
+
+        _loginAttempts.Setup(l => l.GetLoginChecksAsync(It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<DateTime>(), It.IsAny<DateTime>(), It.IsAny<DateTime>()))
+            .ReturnsAsync(new LoginCheckCounts(0, 0, 0));
+        _users.Setup(u => u.GetByEmailAsync("user@test.com")).ReturnsAsync(new User
+        {
+            Id = userId, CompanyId = companyId, Email = "user@test.com", FullName = "Test User",
+            Status = "active", PasswordHash = "hashed",
+            MfaEnabled = true, MfaMethod = "totp", MfaTotpEnrolled = false
+        });
+        _passwordHasher.Setup(p => p.Verify("pass123", "hashed")).Returns(true);
+        _companies.Setup(c => c.GetByIdAsync(companyId))
+            .ReturnsAsync(new Company { Id = companyId, Name = "Test Co", Status = "active" });
+        _sessions.Setup(s => s.EvictOldestIfOverLimitAsync(userId, It.IsAny<int>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>())).Returns(Task.CompletedTask);
+        _sessions.Setup(s => s.CreateAsync(It.IsAny<Session>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
+            .ReturnsAsync((Session s, IDbConnection _, IDbTransaction _) => { s.Id = Guid.NewGuid(); created.Add(s); return s; });
+        _jwt.Setup(j => j.IssueEnrolmentTokenAsync(It.IsAny<User>(), It.IsAny<Guid>())).ReturnsAsync("enrol-token");
+        ArrangeApp("tala-v2-dashboard", userId, absolute: 525600, idle: 525600);
+
+        var before = DateTime.UtcNow;
+        var result = await CreateService().LoginAsync(
+            new LoginRequest { Email = "user@test.com", Password = "pass123", AppSlug = "tala-v2-dashboard" },
+            null, null);
+
+        Assert.True(result.MfaEnrolmentPending);
+        var session = Assert.Single(created);
+        Assert.Equal(10, session.IdleTimeoutMinutes);
+        Assert.InRange(session.ExpiresAt, before.AddMinutes(10), before.AddMinutes(11));
+        Assert.Null(session.AppId);
     }
 }

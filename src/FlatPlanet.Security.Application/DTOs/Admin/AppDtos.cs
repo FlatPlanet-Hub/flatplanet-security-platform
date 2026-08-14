@@ -56,4 +56,17 @@ public class AppResponse
     public string BaseUrl { get; set; } = string.Empty;
     public string Status { get; set; } = string.Empty;
     public DateTime RegisteredAt { get; set; }
+
+    /// <summary>
+    /// Per-app override of the session absolute timeout, in minutes. Null = platform
+    /// default from security_config. Read-only here — set it with
+    /// scripts/apply-tala-dashboard-session-policy.sql. Exposed so administrators can
+    /// see which apps carry a non-standard session lifetime.
+    /// </summary>
+    public int? SessionAbsoluteTimeoutMinutes { get; set; }
+
+    /// <summary>
+    /// Per-app override of the session idle timeout, in minutes. Null = platform default.
+    /// </summary>
+    public int? SessionIdleTimeoutMinutes { get; set; }
 }

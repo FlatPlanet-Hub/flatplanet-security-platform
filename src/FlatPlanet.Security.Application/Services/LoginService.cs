@@ -192,7 +192,7 @@ public class LoginService : ILoginService
 
         // Per-app timeout overrides (apps.session_*_timeout_minutes) win over the
         // platform defaults. Both are stamped onto the session row below.
-        var policy             = await _sessionPolicy.ResolveAsync(request.AppSlug, config);
+        var policy             = await _sessionPolicy.ResolveAsync(user.Id, request.AppSlug, config);
         var absoluteTimeout    = policy.AbsoluteTimeoutMinutes;
         var idleTimeoutMinutes = policy.IdleTimeoutMinutes;
 

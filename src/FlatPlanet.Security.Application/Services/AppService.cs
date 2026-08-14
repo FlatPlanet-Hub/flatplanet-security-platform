@@ -115,6 +115,8 @@ public class AppService : IAppService
         Slug         = a.Slug,
         BaseUrl      = a.BaseUrl,
         Status       = a.Status,
-        RegisteredAt = a.RegisteredAt
+        RegisteredAt = a.RegisteredAt,
+        SessionAbsoluteTimeoutMinutes = a.SessionAbsoluteTimeoutMinutes,
+        SessionIdleTimeoutMinutes     = a.SessionIdleTimeoutMinutes
     };
 }

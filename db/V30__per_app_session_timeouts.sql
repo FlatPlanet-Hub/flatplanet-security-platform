@@ -14,12 +14,17 @@ ALTER TABLE apps
     ADD COLUMN session_absolute_timeout_minutes INTEGER,
     ADD COLUMN session_idle_timeout_minutes     INTEGER;
 
--- A zero or negative timeout would expire every session for the app immediately.
+-- Lower bound: a zero or negative timeout would expire every session for the app
+-- immediately. Upper bound: 525600 minutes (365 days) is the deliberate ceiling for how
+-- long any session may live — the absolute timeout is the only hard cap in the system,
+-- so raising it past a year should be a conscious schema change, not a typo.
 ALTER TABLE apps
-    ADD CONSTRAINT apps_session_absolute_timeout_positive
-        CHECK (session_absolute_timeout_minutes IS NULL OR session_absolute_timeout_minutes > 0),
-    ADD CONSTRAINT apps_session_idle_timeout_positive
-        CHECK (session_idle_timeout_minutes IS NULL OR session_idle_timeout_minutes > 0);
+    ADD CONSTRAINT apps_session_absolute_timeout_range
+        CHECK (session_absolute_timeout_minutes IS NULL
+               OR session_absolute_timeout_minutes BETWEEN 1 AND 525600),
+    ADD CONSTRAINT apps_session_idle_timeout_range
+        CHECK (session_idle_timeout_minutes IS NULL
+               OR session_idle_timeout_minutes BETWEEN 1 AND 525600);
 
 COMMENT ON COLUMN apps.session_absolute_timeout_minutes IS
     'Overrides security_config.session_absolute_timeout_minutes for sessions created against this app. NULL = platform default.';

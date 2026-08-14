@@ -162,7 +162,7 @@ Verifies credentials against the platform's database (bcrypt, work factor 12). I
 |---|---|---|---|
 | `email` | string | Yes | Must be a valid email. Max 256 chars. |
 | `password` | string | Yes | Max 128 chars. Never returned in any response. |
-| `appSlug` | string | No | If provided, app-scoped roles and permissions are included in the response. Max 100 chars. |
+| `appSlug` | string | No | Identifies the app the session belongs to. Recorded on the session and selects that app's session timeout policy — see [Per-app session timeouts](#per-app-session-timeouts). Max 100 chars. |
 
 #### Success Response — 200
 
@@ -277,7 +277,42 @@ Any other authenticated request returns `403 Forbidden` with `"Enrolment token m
 - On failed credential check, both a `LoginAttempt` (failed) and an audit log entry (`login_failure`) are recorded.
 - On success, the oldest session is evicted if `max_concurrent_sessions` is reached.
 - Refresh tokens are single-use. Using a refresh token invalidates it and issues a new one.
-- The `appSlug` field does not affect authentication — it only enriches the response. A missing or invalid slug does not cause a failure on login.
+- The `appSlug` field does not affect **whether** authentication succeeds. A missing, unknown, or invalid slug never causes a login failure.
+- It does affect the **session that authentication produces**: the app is recorded on the session row, and if that app has a session timeout policy the session is created with it. See [Per-app session timeouts](#per-app-session-timeouts).
+
+<a id="per-app-session-timeouts"></a>
+#### Per-app session timeouts
+
+By default every session uses the platform values from `security_config`
+(`session_absolute_timeout_minutes`, `session_idle_timeout_minutes`). An app may carry its
+own overrides, which exist for unattended clients — kiosks and wall-mounted dashboards —
+that cannot survive the platform absolute timeout.
+
+Both timeouts are written onto the session row **at creation**, so:
+
+- Changing an app's policy affects only sessions created afterwards. Existing sessions keep
+  the timeouts they were created with; the client must log in again to pick up a new value.
+- `idleTimeoutMinutes` in the login response is the value stamped on **this** session. Always
+  schedule the heartbeat from the response, never from a hardcoded default.
+
+The override is applied only when **all** of the following hold. Otherwise the session is
+created with the platform defaults and a warning is logged — the login itself still succeeds:
+
+1. `appSlug` matches a registered app.
+2. That app is `active`.
+3. The authenticating user holds an **active role grant** to that app.
+
+Requirement 3 exists because `appSlug` is unauthenticated client input; without it any account
+could claim another app's session lifetime simply by sending its slug.
+
+> **MFA flows: send `appSlug` twice.** `POST /auth/login` returns early when MFA is required and
+> the slug is not carried across the challenge — the session is created by the *verify* call. Send
+> `appSlug` on the login request **and** on `totp/login-verify`, `email-otp/login-verify`, or
+> `backup-code/login-verify`. Sending it only on login silently yields platform defaults.
+
+Administrators can see which apps carry an override via `sessionAbsoluteTimeoutMinutes` and
+`sessionIdleTimeoutMinutes` on the app admin endpoints. The values are read-only over the API and
+are set by an operator script.
 
 #### JWT Claims Structure
 
@@ -2136,7 +2171,8 @@ Verifies the first code from the authenticator app to complete TOTP enrollment. 
 
 ```json
 {
-  "totpCode": "483921"
+  "totpCode": "483921",
+  "appSlug": "tala-v2-dashboard"
 }
 ```
 
@@ -2170,7 +2206,8 @@ Completes a TOTP-gated login. Called after a login response returns `requiresMfa
 ```json
 {
   "userId": "dc88786a-0b38-43bb-8dc3-7ec36f050ec9",
-  "totpCode": "483921"
+  "totpCode": "483921",
+  "appSlug": "tala-v2-dashboard"
 }
 ```
 
@@ -2244,7 +2281,8 @@ Completes an email OTP login. Called after:
 ```json
 {
   "challengeId": "b3d4e5f6-0000-0000-0000-000000000001",
-  "otpCode": "483921"
+  "otpCode": "483921",
+  "appSlug": "tala-v2-dashboard"
 }
 ```
 
@@ -2353,7 +2391,8 @@ Completes a login using a backup code. Used as a last resort when the user canno
 ```json
 {
   "userId": "dc88786a-0b38-43bb-8dc3-7ec36f050ec9",
-  "backupCode": "A1B2C3D4E5"
+  "backupCode": "A1B2C3D4E5",
+  "appSlug": "tala-v2-dashboard"
 }
 ```
 

@@ -94,7 +94,7 @@ public class MfaService : IMfaService
         return new BeginTotpEnrolmentResponse { QrCodeUri = qrCodeUri };
     }
 
-    public async Task<LoginResponse> VerifyTotpEnrolmentAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent, string? appSlug = null)
+    public async Task<LoginResponse> VerifyTotpEnrolmentAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent, string? appSlug)
     {
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
@@ -139,12 +139,12 @@ public class MfaService : IMfaService
             _users.UpdateLastSeenAtAsync(user.Id, DateTime.UtcNow)
         );
 
-        return BuildLoginResponse(user, accessToken, refreshTokenPlain, config, mfaEnrolled: true);
+        return BuildLoginResponse(user, accessToken, refreshTokenPlain, config, session.IdleTimeoutMinutes, mfaEnrolled: true);
     }
 
     // ── TOTP Login ───────────────────────────────────────────────────────────
 
-    public async Task<LoginResponse> VerifyLoginTotpAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent, string? appSlug = null)
+    public async Task<LoginResponse> VerifyLoginTotpAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent, string? appSlug)
     {
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
@@ -196,7 +196,7 @@ public class MfaService : IMfaService
             _users.UpdateLastSeenAtAsync(user.Id, DateTime.UtcNow)
         );
 
-        return BuildLoginResponse(user, accessToken, refreshTokenPlain, config);
+        return BuildLoginResponse(user, accessToken, refreshTokenPlain, config, session.IdleTimeoutMinutes);
     }
 
     // ── Email OTP Login ──────────────────────────────────────────────────────
@@ -284,7 +284,7 @@ public class MfaService : IMfaService
         return challenge;
     }
 
-    public async Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent, string? appSlug = null)
+    public async Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent, string? appSlug)
     {
         var challenge = await _challenges.GetByIdAsync(challengeId)
             ?? throw new KeyNotFoundException("MFA challenge not found.");
@@ -337,7 +337,7 @@ public class MfaService : IMfaService
             _users.UpdateLastSeenAtAsync(user.Id, DateTime.UtcNow)
         );
 
-        return BuildLoginResponse(user, accessToken, refreshTokenPlain, config);
+        return BuildLoginResponse(user, accessToken, refreshTokenPlain, config, session.IdleTimeoutMinutes);
     }
 
     // ── Backup Codes ─────────────────────────────────────────────────────────
@@ -369,7 +369,7 @@ public class MfaService : IMfaService
         return new GenerateBackupCodesResponse { Codes = plainCodes, Count = plainCodes.Count };
     }
 
-    public async Task<LoginResponse> VerifyBackupCodeAsync(Guid userId, string backupCode, string? ipAddress, string? userAgent, string? appSlug = null)
+    public async Task<LoginResponse> VerifyBackupCodeAsync(Guid userId, string backupCode, string? ipAddress, string? userAgent, string? appSlug)
     {
         var user = await _users.GetByIdAsync(userId)
             ?? throw new KeyNotFoundException("User not found.");
@@ -408,7 +408,7 @@ public class MfaService : IMfaService
             _users.UpdateLastSeenAtAsync(user.Id, DateTime.UtcNow)
         );
 
-        return BuildLoginResponse(user, accessToken, refreshTokenPlain, config);
+        return BuildLoginResponse(user, accessToken, refreshTokenPlain, config, session.IdleTimeoutMinutes);
     }
 
     // ── Status ───────────────────────────────────────────────────────────────
@@ -476,9 +476,14 @@ public class MfaService : IMfaService
 
     // ── Shared helpers ───────────────────────────────────────────────────────
 
+    /// <param name="idleTimeoutMinutes">
+    /// Must be the value stamped on the session row, not the platform default — the two
+    /// differ whenever the session's app carries an idle-timeout override, and the client
+    /// schedules its heartbeat from this number.
+    /// </param>
     private static LoginResponse BuildLoginResponse(
         User user, string accessToken, string refreshToken,
-        Dictionary<string, string> config, bool mfaEnrolled = false)
+        Dictionary<string, string> config, int idleTimeoutMinutes, bool mfaEnrolled = false)
     {
         static int Cfg(Dictionary<string, string> c, string key, int def) =>
             c.TryGetValue(key, out var v) && int.TryParse(v, out var n) ? n : def;
@@ -488,7 +493,7 @@ public class MfaService : IMfaService
             AccessToken        = accessToken,
             RefreshToken       = refreshToken,
             ExpiresIn          = Cfg(config, "jwt_access_expiry_minutes", 60) * 60,
-            IdleTimeoutMinutes = Cfg(config, "session_idle_timeout_minutes", 30),
+            IdleTimeoutMinutes = idleTimeoutMinutes,
             User = new UserProfileDto
             {
                 UserId    = user.Id,
@@ -512,7 +517,7 @@ public class MfaService : IMfaService
 
         // Per-app timeout overrides. appSlug is optional — MFA clients that do not
         // send it get the platform defaults, as before.
-        var policy            = await _sessionPolicy.ResolveAsync(appSlug, config);
+        var policy            = await _sessionPolicy.ResolveAsync(userId, appSlug, config);
         var absoluteTimeout   = policy.AbsoluteTimeoutMinutes;
         var idleTimeout       = policy.IdleTimeoutMinutes;
 

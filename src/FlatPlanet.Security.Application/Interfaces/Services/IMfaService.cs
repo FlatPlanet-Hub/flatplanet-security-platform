@@ -8,20 +8,20 @@ public interface IMfaService
 {
     // TOTP enrolment
     Task<BeginTotpEnrolmentResponse> BeginTotpEnrolmentAsync(Guid userId);
-    Task<LoginResponse> VerifyTotpEnrolmentAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent, string? appSlug = null);
+    Task<LoginResponse> VerifyTotpEnrolmentAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent, string? appSlug);
 
     // TOTP login
-    Task<LoginResponse> VerifyLoginTotpAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent, string? appSlug = null);
+    Task<LoginResponse> VerifyLoginTotpAsync(Guid userId, string totpCode, string? ipAddress, string? userAgent, string? appSlug);
 
     // Email OTP login (backup factor)
     Task<MfaChallenge> SendEmailOtpAsync(Guid userId, string? ipAddress);
     Task<MfaChallenge> ResendEmailOtpAsync(Guid userId, string? ipAddress);
     Task<MfaChallenge> RequestTotpFallbackAsync(Guid userId, string? ipAddress);
-    Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent, string? appSlug = null);
+    Task<LoginResponse> VerifyLoginEmailOtpAsync(Guid challengeId, string otpCode, string? ipAddress, string? userAgent, string? appSlug);
 
     // Backup codes (TOTP recovery)
     Task<GenerateBackupCodesResponse> GenerateBackupCodesAsync(Guid userId);
-    Task<LoginResponse> VerifyBackupCodeAsync(Guid userId, string backupCode, string? ipAddress, string? userAgent, string? appSlug = null);
+    Task<LoginResponse> VerifyBackupCodeAsync(Guid userId, string backupCode, string? ipAddress, string? userAgent, string? appSlug);
 
     // Status
     Task<UserMfaStatusResponse> GetMfaStatusAsync(Guid userId);

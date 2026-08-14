@@ -31,6 +31,7 @@ public class MfaServiceTests
     private readonly Mock<ITotpVerifier> _totpVerifier = new();
     private readonly Mock<IMfaBackupCodeRepository> _backupCodes = new();
     private readonly Mock<IAppRepository> _apps = new();
+    private readonly Mock<IUserAppRoleRepository> _grants = new();
     private readonly IMemoryCache _cache = new MemoryCache(new MemoryCacheOptions());
     private readonly Mock<ILogger<MfaService>> _logger = new();
 
@@ -40,7 +41,7 @@ public class MfaServiceTests
         _sessions.Object, _refreshTokens.Object, _roles.Object,
         _db.Object, _identityVerification.Object, _encryptor.Object,
         _totpVerifier.Object, _backupCodes.Object,
-        new SessionPolicyResolver(_apps.Object, NullLogger<SessionPolicyResolver>.Instance),
+        new SessionPolicyResolver(_apps.Object, _grants.Object, NullLogger<SessionPolicyResolver>.Instance),
         _cache, _logger.Object);
 
     private void SetupTransaction()
@@ -144,7 +145,7 @@ public class MfaServiceTests
         _users.Setup(u => u.UpdateLastSeenAtAsync(userId, It.IsAny<DateTime>())).Returns(Task.CompletedTask);
 
         var svc = CreateService();
-        var result = await svc.VerifyTotpEnrolmentAsync(userId, "123456", "1.2.3.4", "agent");
+        var result = await svc.VerifyTotpEnrolmentAsync(userId, "123456", "1.2.3.4", "agent", appSlug: null);
 
         Assert.Equal("access-token", result.AccessToken);
         Assert.True(result.MfaEnrolled);
@@ -161,7 +162,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            svc.VerifyTotpEnrolmentAsync(userId, "123456", null, null));
+            svc.VerifyTotpEnrolmentAsync(userId, "123456", null, null, appSlug: null));
     }
 
     [Fact]
@@ -179,7 +180,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            svc.VerifyTotpEnrolmentAsync(userId, "000000", null, null));
+            svc.VerifyTotpEnrolmentAsync(userId, "000000", null, null, appSlug: null));
     }
 
     [Fact]
@@ -197,7 +198,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            svc.VerifyTotpEnrolmentAsync(userId, "123456", null, null));
+            svc.VerifyTotpEnrolmentAsync(userId, "123456", null, null, appSlug: null));
     }
 
     // ── SendEmailOtpAsync ────────────────────────────────────────────────────
@@ -345,7 +346,7 @@ public class MfaServiceTests
         _users.Setup(u => u.UpdateLastSeenAtAsync(userId, It.IsAny<DateTime>())).Returns(Task.CompletedTask);
 
         var svc = CreateService();
-        var result = await svc.VerifyLoginEmailOtpAsync(challengeId, "123456", "1.2.3.4", "agent");
+        var result = await svc.VerifyLoginEmailOtpAsync(challengeId, "123456", "1.2.3.4", "agent", appSlug: null);
 
         Assert.Equal("access-token", result.AccessToken);
         Assert.Equal("plain-rt", result.RefreshToken);
@@ -372,7 +373,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            svc.VerifyLoginEmailOtpAsync(challengeId, "wrong", null, null));
+            svc.VerifyLoginEmailOtpAsync(challengeId, "wrong", null, null, appSlug: null));
     }
 
     [Fact]
@@ -389,7 +390,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            svc.VerifyLoginEmailOtpAsync(challengeId, "123456", null, null));
+            svc.VerifyLoginEmailOtpAsync(challengeId, "123456", null, null, appSlug: null));
     }
 
     [Fact]
@@ -406,7 +407,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<TooManyRequestsException>(() =>
-            svc.VerifyLoginEmailOtpAsync(challengeId, "123456", null, null));
+            svc.VerifyLoginEmailOtpAsync(challengeId, "123456", null, null, appSlug: null));
     }
 
     [Fact]
@@ -422,7 +423,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<ArgumentException>(() =>
-            svc.VerifyLoginEmailOtpAsync(challengeId, "123456", null, null));
+            svc.VerifyLoginEmailOtpAsync(challengeId, "123456", null, null, appSlug: null));
     }
 
     [Fact]
@@ -443,7 +444,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<ForbiddenException>(() =>
-            svc.VerifyLoginEmailOtpAsync(challengeId, "123456", null, null));
+            svc.VerifyLoginEmailOtpAsync(challengeId, "123456", null, null, appSlug: null));
 
         // I-1: Challenge must NOT be consumed when user is suspended
         _challenges.Verify(c => c.MarkVerifiedAsync(It.IsAny<Guid>()), Times.Never);
@@ -564,7 +565,7 @@ public class MfaServiceTests
         _users.Setup(u => u.UpdateLastSeenAtAsync(userId, It.IsAny<DateTime>())).Returns(Task.CompletedTask);
 
         var svc = CreateService();
-        var result = await svc.VerifyLoginTotpAsync(userId, "123456", "1.2.3.4", "agent");
+        var result = await svc.VerifyLoginTotpAsync(userId, "123456", "1.2.3.4", "agent", appSlug: null);
 
         Assert.Equal("access-token", result.AccessToken);
         Assert.Equal("plain-rt", result.RefreshToken);
@@ -581,7 +582,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            svc.VerifyLoginTotpAsync(userId, "123456", null, null));
+            svc.VerifyLoginTotpAsync(userId, "123456", null, null, appSlug: null));
     }
 
     [Fact]
@@ -593,7 +594,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<ForbiddenException>(() =>
-            svc.VerifyLoginTotpAsync(userId, "123456", null, null));
+            svc.VerifyLoginTotpAsync(userId, "123456", null, null, appSlug: null));
     }
 
     [Fact]
@@ -611,7 +612,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            svc.VerifyLoginTotpAsync(userId, "000000", null, null));
+            svc.VerifyLoginTotpAsync(userId, "000000", null, null, appSlug: null));
     }
 
     [Fact]
@@ -630,7 +631,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            svc.VerifyLoginTotpAsync(userId, "123456", null, null));
+            svc.VerifyLoginTotpAsync(userId, "123456", null, null, appSlug: null));
     }
 
     // ── Backup Codes ─────────────────────────────────────────────────────────
@@ -695,7 +696,7 @@ public class MfaServiceTests
         _users.Setup(u => u.UpdateLastSeenAtAsync(userId, It.IsAny<DateTime>())).Returns(Task.CompletedTask);
 
         var svc = CreateService();
-        var result = await svc.VerifyBackupCodeAsync(userId, "ABCDE12345", "1.2.3.4", "agent");
+        var result = await svc.VerifyBackupCodeAsync(userId, "ABCDE12345", "1.2.3.4", "agent", appSlug: null);
 
         Assert.Equal("access-token", result.AccessToken);
         _backupCodes.Verify(b => b.MarkUsedAsync(codeId), Times.Once);
@@ -714,7 +715,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-            svc.VerifyBackupCodeAsync(userId, "BADCODE000", null, null));
+            svc.VerifyBackupCodeAsync(userId, "BADCODE000", null, null, appSlug: null));
     }
 
     [Fact]
@@ -726,7 +727,7 @@ public class MfaServiceTests
 
         var svc = CreateService();
         await Assert.ThrowsAsync<ForbiddenException>(() =>
-            svc.VerifyBackupCodeAsync(userId, "ABCDE12345", null, null));
+            svc.VerifyBackupCodeAsync(userId, "ABCDE12345", null, null, appSlug: null));
     }
 
     // ── GetMfaStatusAsync ────────────────────────────────────────────────────
@@ -762,5 +763,110 @@ public class MfaServiceTests
         Assert.Equal(0, result.BackupCodesRemaining);
         // Should not query backup codes when not enrolled
         _backupCodes.Verify(b => b.CountUnusedByUserAsync(It.IsAny<Guid>()), Times.Never);
+    }
+
+    // ── Per-app session policy on the MFA login path ─────────────────────────
+
+    /// <summary>Arranges a successful TOTP login and captures the Session written to the repo.</summary>
+    private (Guid userId, List<Session> created) ArrangeTotpLogin()
+    {
+        SetupTransaction();
+        SetupConfig();
+
+        var userId      = Guid.NewGuid();
+        var secretBytes = new byte[20];
+        long matchedStep = 100L;
+        var created     = new List<Session>();
+
+        _users.Setup(u => u.GetByIdAsync(userId))
+            .ReturnsAsync(new User { Id = userId, Email = "user@test.com", FullName = "Test", CompanyId = Guid.NewGuid(),
+                Status = "active", MfaTotpEnrolled = true, MfaTotpSecret = "encrypted", MfaTotpLastUsedStep = null });
+        _encryptor.Setup(e => e.Decrypt("encrypted")).Returns(secretBytes);
+        _totpVerifier.Setup(t => t.Verify(secretBytes, "123456", out matchedStep)).Returns(true);
+        _users.Setup(u => u.UpdateMfaTotpLastUsedStepAsync(userId, matchedStep)).Returns(Task.CompletedTask);
+        _sessions.Setup(s => s.EvictOldestIfOverLimitAsync(userId, It.IsAny<int>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>())).Returns(Task.CompletedTask);
+        _sessions.Setup(s => s.CreateAsync(It.IsAny<Session>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
+            .ReturnsAsync((Session s, IDbConnection _, IDbTransaction _) => { s.Id = Guid.NewGuid(); created.Add(s); return s; });
+        _jwt.Setup(j => j.GenerateRefreshToken()).Returns(("plain-rt", "hashed-rt"));
+        _refreshTokens.Setup(r => r.CreateAsync(It.IsAny<RefreshToken>(), It.IsAny<IDbConnection>(), It.IsAny<IDbTransaction>()))
+            .ReturnsAsync((RefreshToken t, IDbConnection _, IDbTransaction _) => t);
+        _roles.Setup(r => r.GetPlatformRoleNamesForUserAsync(userId)).ReturnsAsync(new List<string>());
+        _jwt.Setup(j => j.IssueAccessTokenAsync(It.IsAny<User>(), It.IsAny<Guid>(), It.IsAny<IEnumerable<string>>())).ReturnsAsync("access-token");
+        _auditLog.Setup(a => a.LogAsync(It.IsAny<AuthAuditLog>())).Returns(Task.CompletedTask);
+        _users.Setup(u => u.UpdateLastSeenAtAsync(userId, It.IsAny<DateTime>())).Returns(Task.CompletedTask);
+
+        return (userId, created);
+    }
+
+    private Guid ArrangeApp(string slug, Guid userId, int? absolute = null, int? idle = null, bool granted = true)
+    {
+        var appId = Guid.NewGuid();
+        _apps.Setup(a => a.GetBySlugAsync(slug)).ReturnsAsync(new App
+        {
+            Id     = appId,
+            Slug   = slug,
+            Status = "active",
+            SessionAbsoluteTimeoutMinutes = absolute,
+            SessionIdleTimeoutMinutes     = idle
+        });
+        _grants.Setup(g => g.GetActiveByUserAndAppAsync(userId, appId))
+            .ReturnsAsync(granted
+                ? new[] { new UserAppRole { Id = Guid.NewGuid(), UserId = userId, AppId = appId } }
+                : Array.Empty<UserAppRole>());
+        return appId;
+    }
+
+    [Fact]
+    public async Task VerifyLoginTotp_ShouldApplyAppOverride_AndReportItInTheResponse()
+    {
+        var (userId, created) = ArrangeTotpLogin();
+        var appId = ArrangeApp("tala-v2-dashboard", userId, absolute: 525600, idle: 525600);
+
+        var before = DateTime.UtcNow;
+        var result = await CreateService()
+            .VerifyLoginTotpAsync(userId, "123456", "1.2.3.4", "TV", appSlug: "tala-v2-dashboard");
+
+        var session = Assert.Single(created);
+        Assert.Equal(appId, session.AppId);
+        Assert.Equal(525600, session.IdleTimeoutMinutes);
+        Assert.InRange(session.ExpiresAt, before.AddMinutes(525600), before.AddMinutes(525601));
+
+        // The response must report the value stamped on the row — the client schedules
+        // its heartbeat from this number.
+        Assert.Equal(session.IdleTimeoutMinutes, result.IdleTimeoutMinutes);
+        Assert.Equal(525600, result.IdleTimeoutMinutes);
+    }
+
+    [Fact]
+    public async Task VerifyLoginTotp_ShouldRefuseOverride_WhenUserHasNoGrantToApp()
+    {
+        var (userId, created) = ArrangeTotpLogin();
+        ArrangeApp("tala-v2-dashboard", userId, absolute: 525600, idle: 525600, granted: false);
+
+        var before = DateTime.UtcNow;
+        var result = await CreateService()
+            .VerifyLoginTotpAsync(userId, "123456", null, null, appSlug: "tala-v2-dashboard");
+
+        var session = Assert.Single(created);
+        Assert.Equal(30, session.IdleTimeoutMinutes);
+        Assert.InRange(session.ExpiresAt, before.AddMinutes(480), before.AddMinutes(481));
+        Assert.Equal(30, result.IdleTimeoutMinutes);
+    }
+
+    [Fact]
+    public async Task VerifyLoginTotp_ShouldUsePlatformDefaults_WhenNoAppSlugSent()
+    {
+        var (userId, created) = ArrangeTotpLogin();
+
+        var before = DateTime.UtcNow;
+        var result = await CreateService()
+            .VerifyLoginTotpAsync(userId, "123456", null, null, appSlug: null);
+
+        var session = Assert.Single(created);
+        Assert.Null(session.AppId);
+        Assert.Equal(30, session.IdleTimeoutMinutes);
+        Assert.InRange(session.ExpiresAt, before.AddMinutes(480), before.AddMinutes(481));
+        Assert.Equal(30, result.IdleTimeoutMinutes);
+        _apps.Verify(a => a.GetBySlugAsync(It.IsAny<string>()), Times.Never);
     }
 }
