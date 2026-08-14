@@ -43,7 +43,7 @@ public class FederatedLoginServiceTests
         _audit.Object,
         _config.Object,
         _db.Object,
-        new SessionPolicyResolver(_apps.Object, _grants.Object, NullLogger<SessionPolicyResolver>.Instance),
+        new SessionPolicyResolver(_apps.Object, _grants.Object, _audit.Object, NullLogger<SessionPolicyResolver>.Instance),
         NullLogger<FederatedLoginService>.Instance);
 
     private static User ActiveUser() => new()

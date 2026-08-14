@@ -41,7 +41,7 @@ public class MfaServiceTests
         _sessions.Object, _refreshTokens.Object, _roles.Object,
         _db.Object, _identityVerification.Object, _encryptor.Object,
         _totpVerifier.Object, _backupCodes.Object,
-        new SessionPolicyResolver(_apps.Object, _grants.Object, NullLogger<SessionPolicyResolver>.Instance),
+        new SessionPolicyResolver(_apps.Object, _grants.Object, _auditLog.Object, NullLogger<SessionPolicyResolver>.Instance),
         _cache, _logger.Object);
 
     private void SetupTransaction()

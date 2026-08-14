@@ -1490,11 +1490,19 @@ Returns all registered apps.
       "slug": "dashboard-hub",
       "baseUrl": "https://dashboard.acme.com",
       "status": "active",
-      "registeredAt": "2026-01-15T08:00:00Z"
+      "registeredAt": "2026-01-15T08:00:00Z",
+      "sessionAbsoluteTimeoutMinutes": null,
+      "sessionIdleTimeoutMinutes": null
     }
   ]
 }
 ```
+
+`sessionAbsoluteTimeoutMinutes` and `sessionIdleTimeoutMinutes` are this app's
+[session timeout policy](#per-app-session-timeouts). `null` — the usual case — means the app
+uses the platform defaults from `security_config`. A non-null value means sessions created
+against this app get that lifetime instead. Both are read-only over the API and are set by an
+operator script.
 
 ---
 
@@ -2179,6 +2187,7 @@ Verifies the first code from the authenticator app to complete TOTP enrollment. 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `totpCode` | string | Yes | 6–8 character code from the authenticator app. |
+| `appSlug` | string | No | App the session belongs to. Selects that app's session timeout policy — see [Per-app session timeouts](#per-app-session-timeouts). Max 100 chars. |
 
 #### Success Response — 200
 
@@ -2215,6 +2224,7 @@ Completes a TOTP-gated login. Called after a login response returns `requiresMfa
 |---|---|---|---|
 | `userId` | UUID | Yes | From the `user.userId` field in the login response. |
 | `totpCode` | string | Yes | 6–8 character code from the authenticator app. |
+| `appSlug` | string | No | App the session belongs to. Selects that app's session timeout policy — see [Per-app session timeouts](#per-app-session-timeouts). Max 100 chars. |
 
 #### Success Response — 200
 
@@ -2290,6 +2300,7 @@ Completes an email OTP login. Called after:
 |---|---|---|---|
 | `challengeId` | UUID | Yes | From the `challengeId` in the login response (email_otp method), or from the fallback response. |
 | `otpCode` | string | Yes | 4–8 character code from the email. |
+| `appSlug` | string | No | App the session belongs to. Selects that app's session timeout policy — see [Per-app session timeouts](#per-app-session-timeouts). Max 100 chars. |
 
 #### Success Response — 200
 
@@ -2400,6 +2411,7 @@ Completes a login using a backup code. Used as a last resort when the user canno
 |---|---|---|---|
 | `userId` | UUID | Yes | From the `user.userId` field in the login response. |
 | `backupCode` | string | Yes | Exactly 10 characters. Single-use — consumed on success. |
+| `appSlug` | string | No | App the session belongs to. Selects that app's session timeout policy — see [Per-app session timeouts](#per-app-session-timeouts). Max 100 chars. |
 
 #### Success Response — 200
 

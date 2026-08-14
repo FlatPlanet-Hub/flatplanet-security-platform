@@ -44,6 +44,14 @@ public static class AuditEventType
     // ── Federated login ────────────────────────────────────────────────────
     public const string FederatedLogin = "federated_login";
 
+    // ── Per-app session policy ─────────────────────────────────────────────
+    /// <summary>
+    /// A login supplied an appSlug whose session timeout policy was refused — unknown
+    /// app, inactive app, or no active grant. The login itself still succeeded with
+    /// platform default timeouts.
+    /// </summary>
+    public const string SessionPolicyDenied = "session_policy_denied";
+
     // ── Service tokens (per-service auth) ──────────────────────────────────
     public const string ServiceTokenMinted        = "service_token_minted";
     public const string ServiceTokenRevoked       = "service_token_revoked";

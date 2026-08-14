@@ -7,6 +7,7 @@ using FlatPlanet.Security.Application.Interfaces.Services;
 using FlatPlanet.Security.Application.Services;
 using FlatPlanet.Security.Domain.Constants;
 using FlatPlanet.Security.Domain.Entities;
+using FlatPlanet.Security.Domain.Enums;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -40,7 +41,7 @@ public class LoginServiceTests
         _sessions.Object, _refreshTokens.Object,
         _loginAttempts.Object, _auditLog.Object, _configService.Object,
         _roles.Object, _db.Object, _companies.Object, _mfa.Object,
-        new SessionPolicyResolver(_apps.Object, _grants.Object, NullLogger<SessionPolicyResolver>.Instance),
+        new SessionPolicyResolver(_apps.Object, _grants.Object, _auditLog.Object, NullLogger<SessionPolicyResolver>.Instance),
         _cache, _logger.Object);
 
     private void SetupDefaultConfig()
@@ -405,7 +406,7 @@ public class LoginServiceTests
         // appSlug is unauthenticated client input — without the grant gate, any account
         // could claim the dashboard's 365-day session by sending its slug.
         var (userId, created) = ArrangeSuccessfulLogin();
-        var appId = ArrangeApp("tala-v2-dashboard", userId, absolute: 525600, idle: 525600, granted: false);
+        ArrangeApp("tala-v2-dashboard", userId, absolute: 525600, idle: 525600, granted: false);
 
         var before = DateTime.UtcNow;
         var result = await CreateService().LoginAsync(
@@ -413,10 +414,14 @@ public class LoginServiceTests
             null, null);
 
         var session = Assert.Single(created);
-        Assert.Equal(appId, session.AppId);   // claim is recorded
+        // The claim is unverified, so it is not written to the session — it goes to the
+        // audit log instead, where a refused claim cannot be mistaken for a real one.
+        Assert.Null(session.AppId);
         Assert.Equal(30, session.IdleTimeoutMinutes);
         Assert.InRange(session.ExpiresAt, before.AddMinutes(480), before.AddMinutes(481));
         Assert.Equal(30, result.IdleTimeoutMinutes);
+        _auditLog.Verify(a => a.LogAsync(It.Is<AuthAuditLog>(l =>
+            l.EventType == AuditEventType.SessionPolicyDenied)), Times.Once);
     }
 
     [Fact]

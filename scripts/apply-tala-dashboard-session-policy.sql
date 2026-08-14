@@ -49,7 +49,9 @@ BEGIN
     RAISE NOTICE 'Session policy applied to ''%'': absolute=% min, idle=% min.', v_slug, v_absolute, v_idle;
 END $$;
 
--- Verify before committing.
+-- Every app carrying an override after this runs. Review the output — if a slug you
+-- did not expect appears, run scripts/rollback-per-app-session-timeouts.sql.
+-- (A wrong slug cannot get this far: the RAISE above aborts the transaction.)
 SELECT slug, name, status,
        session_absolute_timeout_minutes,
        session_idle_timeout_minutes

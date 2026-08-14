@@ -26,20 +26,21 @@ public interface ISessionPolicyResolver
     /// grant to it. Without that check any account could claim another app's session
     /// lifetime just by sending its slug.
     ///
-    /// Never throws: an unknown slug, an inactive app, or a missing grant falls back to
-    /// the platform defaults and logs a warning. Login has always accepted an arbitrary
+    /// On refusal the session gets platform defaults and no app id, and the refusal is
+    /// written to the audit log. It never throws: login has always accepted an arbitrary
     /// appSlug (see docs/security-api-reference.md), so rejecting one here would break
     /// existing clients that send a stale value.
     /// </remarks>
     Task<SessionPolicy> ResolveAsync(Guid userId, string? appSlug, IReadOnlyDictionary<string, string> config);
 
     /// <summary>
-    /// Resolves from an app the caller has ALREADY authorised for this user.
+    /// Resolves from an app whose association with this user the caller has ALREADY verified,
+    /// as FederatedLoginService does before creating its session. If you have not verified the
+    /// user's access to the app, call <see cref="ResolveAsync"/> instead.
     /// </summary>
     /// <remarks>
-    /// Applies the app's override unconditionally — it performs no status or grant check.
-    /// Only call this after verifying both, as FederatedLoginService does before creating
-    /// its session. If you have not verified access, call <see cref="ResolveAsync"/>.
+    /// Performs no grant check — that is the caller's job. It DOES still enforce app status:
+    /// a suspended or inactive app never receives its override on any login path.
     /// </remarks>
     SessionPolicy ResolveForAuthorisedApp(App? app, IReadOnlyDictionary<string, string> config);
 }
